@@ -1,6 +1,9 @@
 {
   "version": 2,
   "name": "json-comparator",
+  "github": {
+    "autoDeployment": false
+  },
   "builds": [
     {
       "src": "package.json",
@@ -15,6 +18,18 @@
       "src": "/static/(.*)",
       "headers": {
         "cache-control": "s-maxage=31536000,immutable"
+      }
+    },
+    {
+      "src": "/favicon\\.(ico|png|svg|jpg|jpeg)$",
+      "headers": {
+        "cache-control": "s-maxage=86400"
+      }
+    },
+    {
+      "src": "/(.*\\.(ico|png|svg|jpg|jpeg))$",
+      "headers": {
+        "cache-control": "s-maxage=86400"
       }
     },
     {
