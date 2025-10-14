@@ -1239,7 +1239,7 @@ const JSONCompare = () => {
                       <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-purple-400 pointer-events-none" />
                       <input
                         type="text"
-                        placeholder="Search (typing appears immediately)..."
+                        placeholder="Search ... "
                         value={searchTerm1}
                         onChange={(e) => setSearchTerm1(e.target.value)}
                         onKeyDown={handleSearchKeyDown1}
