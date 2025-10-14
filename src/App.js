@@ -1,3 +1,4 @@
+import { Analytics } from "@vercel/analytics/react"
 import React, {useState, useRef, useCallback, useMemo, useEffect, memo} from "react";
 import { FileJson, GitCompare, AlertCircle, CheckCircle, Copy, RotateCcw, Upload, ArrowLeftRight, Search, Filter, Minimize2, Maximize2, Check, ChevronRight, ChevronDown, Pin, X, Eye,} from "lucide-react";
 
@@ -1034,6 +1035,7 @@ const JSONCompare = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-4">
+      <Analytics/>
       <div className="max-w-7xl mx-auto">
         <div className="text-center mb-8 pt-8">
           <div className="flex items-center justify-center gap-3 mb-4">
