@@ -1,324 +1,405 @@
-import React, { useState, useRef, useCallback, useMemo } from "react";
-import {
-  FileJson,
-  GitCompare,
-  AlertCircle,
-  CheckCircle,
-  Copy,
-  RotateCcw,
-  Upload,
-  Download,
-  ArrowLeftRight,
-  Search,
-  Minimize2,
-  Maximize2,
-  Check,
-  ChevronRight,
-  ChevronDown,
-  Pin,
-  X,
-} from "lucide-react";
+import React, {useState, useRef, useCallback, useMemo, useEffect, memo} from "react";
+import { FileJson, GitCompare, AlertCircle, CheckCircle, Copy, RotateCcw, Upload, ArrowLeftRight, Search, Filter, Minimize2, Maximize2, Check, ChevronRight, ChevronDown, Pin, X, Eye,} from "lucide-react";
 
-// Helper function to recursively search JSON
-const searchInObject = (obj, searchTerm, currentPath = "") => {
+const useDebounce = (value, delay) => {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [value, delay]);
+
+  return debouncedValue;
+};
+
+const searchInObject = (
+  obj,
+  searchTerm,
+  currentPath = "",
+  parentPaths = []
+) => {
   const matches = [];
   const lowerSearchTerm = searchTerm.toLowerCase();
 
-  const search = (value, path) => {
+  const search = (value, path, parents) => {
     if (value === null || value === undefined) return;
 
     if (typeof value === "object" && !Array.isArray(value)) {
       Object.entries(value).forEach(([key, val]) => {
         const newPath = path ? `${path}.${key}` : key;
+        const newParents = [...parents, path].filter(Boolean);
 
-        // Check if key matches
         if (key.toLowerCase().includes(lowerSearchTerm)) {
-          matches.push(newPath);
+          matches.push({ path: newPath, parents: newParents });
         }
 
-        // Check if value matches (for primitives)
         if (typeof val !== "object" && val !== null) {
           const valStr = String(val).toLowerCase();
           if (valStr.includes(lowerSearchTerm)) {
-            matches.push(newPath);
+            matches.push({ path: newPath, parents: newParents });
           }
         }
 
-        // Recurse into nested objects
-        search(val, newPath);
+        search(val, newPath, newParents);
       });
     } else if (Array.isArray(value)) {
       value.forEach((item, index) => {
         const newPath = `${path}[${index}]`;
+        const newParents = [...parents, path].filter(Boolean);
 
-        // Check if array item matches (for primitives)
         if (typeof item !== "object" && item !== null) {
           const itemStr = String(item).toLowerCase();
           if (itemStr.includes(lowerSearchTerm)) {
-            matches.push(newPath);
+            matches.push({ path: newPath, parents: newParents });
           }
         }
 
-        // Recurse into nested items
-        search(item, newPath);
+        search(item, newPath, newParents);
       });
     }
   };
 
-  search(obj, currentPath);
+  search(obj, currentPath, parentPaths);
   return matches;
 };
 
-// Tree Node Component with Search Highlighting
-const TreeNode = ({
-  nodeKey,
-  value,
-  path,
-  differences,
-  isLeft,
-  level = 0,
-  onHover,
-  onPin,
-  pinnedPath,
-  searchMatches = [],
-  searchTerm = "",
-}) => {
-  const isMatchedPath = searchMatches.includes(path);
-  const [isExpanded, setIsExpanded] = useState(level < 2 || isMatchedPath);
+const TreeNode = memo(
+  ({
+    nodeKey,
+    value,
+    path,
+    differences,
+    isLeft,
+    level = 0,
+    onHover,
+    onPin,
+    pinnedPath,
+    searchMatches = [],
+    searchTerm = "",
+    currentMatchIndex = -1,
+    expandedPaths = new Set(),
+    selectedPath = "",
+  }) => {
+    const matchData = searchMatches.find((m) => m.path === path);
+    const isMatchedPath = !!matchData;
+    const isCurrentMatch = searchMatches[currentMatchIndex]?.path === path;
+    const isSelected = selectedPath === path;
+    const shouldExpand =
+      expandedPaths.has(path) || isMatchedPath || isSelected || level < 2;
+    const [isExpanded, setIsExpanded] = useState(shouldExpand);
+    const nodeRef = useRef(null);
 
-  const isPinned = pinnedPath === path;
+    const isPinned = pinnedPath === path;
 
-  // Auto-expand when search matches
-  React.useEffect(() => {
-    if (isMatchedPath && searchTerm) {
-      setIsExpanded(true);
-    }
-  }, [isMatchedPath, searchTerm]);
+    useEffect(() => {
+      if (shouldExpand) {
+        setIsExpanded(true);
+      }
+    }, [shouldExpand]);
 
-  const getDiffStatus = useCallback(() => {
-    if (!differences) return null;
+    useEffect(() => {
+      if ((isCurrentMatch || isSelected) && nodeRef.current) {
+        setTimeout(() => {
+          nodeRef.current?.scrollIntoView({
+            behavior: "smooth",
+            block: "center",
+            inline: "nearest",
+          });
+        }, 200);
+      }
+    }, [isCurrentMatch, isSelected]);
 
-    const diff = differences.find((d) => d.path === path);
-    if (!diff) return null;
+    const getDiffStatus = useCallback(() => {
+      if (!differences) return null;
 
-    if (diff.type === "added" && !isLeft) return "added";
-    if (diff.type === "removed" && isLeft) return "removed";
-    if (diff.type === "modified") return "modified";
+      const diff = differences.find((d) => d.path === path);
+      if (!diff) return null;
 
-    return null;
-  }, [differences, path, isLeft]);
+      if (diff.type === "added" && !isLeft) return "added";
+      if (diff.type === "removed" && isLeft) return "removed";
+      if (diff.type === "modified") return "modified";
 
-  const diffStatus = getDiffStatus();
+      return null;
+    }, [differences, path, isLeft]);
 
-  const isObject = value && typeof value === "object" && !Array.isArray(value);
-  const isArray = Array.isArray(value);
-  const isPrimitive = !isObject && !isArray;
-  const hasChildren = isObject || isArray;
+    const diffStatus = getDiffStatus();
 
-  const getBgColor = () => {
-    if (isMatchedPath && searchTerm) return "rgba(72, 251, 36, 0.2)";
-    if (isPinned) return "rgba(168, 85, 247, 0.15)";
-    if (!diffStatus) return "transparent";
-    if (diffStatus === "added") return "rgba(34, 197, 94, 0.1)";
-    if (diffStatus === "removed") return "rgba(239, 68, 68, 0.1)";
-    if (diffStatus === "modified") return "rgba(234, 179, 8, 0.1)";
-    return "transparent";
-  };
+    const isObject =
+      value && typeof value === "object" && !Array.isArray(value);
+    const isArray = Array.isArray(value);
+    const isPrimitive = !isObject && !isArray;
+    const hasChildren = isObject || isArray;
 
-  const getTextColor = () => {
-    if (isMatchedPath && searchTerm) return "text-green-300 font-bold";
-    if (!diffStatus) return "";
-    if (diffStatus === "added") return "text-green-300";
-    if (diffStatus === "removed") return "text-red-300";
-    if (diffStatus === "modified") return "text-yellow-300";
-    return "";
-  };
+    const getBgColor = () => {
+      if (isSelected) return "rgba(168, 85, 247, 0.3)";
+      if (isCurrentMatch && searchTerm) return "rgba(251, 191, 36, 0.4)";
+      if (isMatchedPath && searchTerm) return "rgba(251, 191, 36, 0.2)";
+      if (isPinned) return "rgba(168, 85, 247, 0.15)";
+      if (!diffStatus) return "transparent";
+      if (diffStatus === "added") return "rgba(34, 197, 94, 0.1)";
+      if (diffStatus === "removed") return "rgba(239, 68, 68, 0.1)";
+      if (diffStatus === "modified") return "rgba(234, 179, 8, 0.1)";
+      return "transparent";
+    };
 
-  // Highlight matching text
-  const highlightText = (text) => {
-    if (!searchTerm || !text) return text;
+    const getTextColor = useCallback(() => {
+      if (isSelected) return "text-purple-300 font-bold";
+      if (isCurrentMatch && searchTerm) return "text-yellow-300 font-bold";
+      if (isMatchedPath && searchTerm) return "text-yellow-300 font-bold";
+      if (!diffStatus) return "";
+      if (diffStatus === "added") return "text-green-300";
+      if (diffStatus === "removed") return "text-red-300";
+      if (diffStatus === "modified") return "text-yellow-300";
+      return "";
+    }, [isSelected, isCurrentMatch, searchTerm, isMatchedPath, diffStatus]);
 
-    const textStr = String(text);
-    const regex = new RegExp(`(${searchTerm})`, "gi");
-    const parts = textStr.split(regex);
+    const highlightText = useCallback(
+      (text) => {
+        if (!searchTerm || !text) return text;
 
-    return parts.map((part, index) =>
-      regex.test(part) ? (
-        <mark key={index} className="bg-green-400 text-black px-0.5 rounded">
-          {part}
-        </mark>
-      ) : (
-        part
-      )
+        const textStr = String(text);
+        const lowerText = textStr.toLowerCase();
+        const lowerSearch = searchTerm.toLowerCase();
+
+        if (!lowerText.includes(lowerSearch)) return textStr;
+
+        const parts = [];
+        let lastIndex = 0;
+        let index = lowerText.indexOf(lowerSearch);
+
+        while (index !== -1) {
+          if (index > lastIndex) {
+            parts.push(textStr.substring(lastIndex, index));
+          }
+          parts.push(
+            <mark
+              key={index}
+              className="bg-yellow-400 text-black px-0.5 rounded"
+            >
+              {textStr.substring(index, index + lowerSearch.length)}
+            </mark>
+          );
+          lastIndex = index + lowerSearch.length;
+          index = lowerText.indexOf(lowerSearch, lastIndex);
+        }
+
+        if (lastIndex < textStr.length) {
+          parts.push(textStr.substring(lastIndex));
+        }
+
+        return parts;
+      },
+      [searchTerm]
     );
-  };
 
-  const renderValue = () => {
-    if (isPrimitive) {
-      const valueStr = JSON.stringify(value);
-      return (
-        <span className={`text-emerald-400 ${getTextColor()}`}>
-          {highlightText(valueStr)}
-        </span>
-      );
-    }
+    const renderValue = useMemo(() => {
+      const textColor = getTextColor();
 
-    if (isArray) {
+      if (isPrimitive) {
+        const valueStr = JSON.stringify(value);
+        return (
+          <span className={`text-emerald-400 ${textColor}`}>
+            {highlightText(valueStr)}
+          </span>
+        );
+      }
+
+      if (isArray) {
+        return (
+          <span className="text-purple-400">
+            [{isExpanded ? "" : `...${value.length} items`}]
+          </span>
+        );
+      }
+
       return (
         <span className="text-purple-400">
-          [{isExpanded ? "" : `...${value.length} items`}]
+          {"{"}
+          {isExpanded ? "" : "..."}
+          {"}"}
         </span>
       );
-    }
+    }, [isPrimitive, isArray, isExpanded, value, highlightText, getTextColor]);
+
+    const handleClick = useCallback(
+      (e) => {
+        e.stopPropagation();
+        if (hasChildren) {
+          setIsExpanded(!isExpanded);
+        }
+      },
+      [hasChildren, isExpanded]
+    );
+
+    const handlePinClick = useCallback(
+      (e) => {
+        e.stopPropagation();
+        onPin(path);
+      },
+      [onPin, path]
+    );
 
     return (
-      <span className="text-purple-400">
-        {"{"}
-        {isExpanded ? "" : "..."}
-        {"}"}
-      </span>
-    );
-  };
-
-  const handleClick = (e) => {
-    e.stopPropagation();
-    if (hasChildren) {
-      setIsExpanded(!isExpanded);
-    }
-  };
-
-  const handlePinClick = (e) => {
-    e.stopPropagation();
-    onPin(path);
-  };
-
-  return (
-    <div className="font-mono text-sm">
-      <div
-        className={`flex items-center gap-1 py-1 px-2 hover:bg-slate-700/30 rounded cursor-pointer group ${
-          isPinned ? "ring-1 ring-purple-500/50" : ""
-        } ${isMatchedPath && searchTerm ? "ring-1 ring-green-500/50" : ""}`}
-        style={{
-          paddingLeft: `${level * 20 + 8}px`,
-          backgroundColor: getBgColor(),
-        }}
-        onClick={handleClick}
-        onMouseEnter={() => onHover(path)}
-        onMouseLeave={() => !isPinned && onHover("")}
-      >
-        <span className="w-4 h-4 flex-shrink-0">
-          {hasChildren &&
-            (isExpanded ? (
-              <ChevronDown className="w-4 h-4 text-purple-400" />
-            ) : (
-              <ChevronRight className="w-4 h-4 text-purple-400" />
-            ))}
-        </span>
-
-        <span className={`text-blue-300 ${getTextColor()}`}>
-          {highlightText(nodeKey)}:
-        </span>
-
-        <span className="ml-1">{renderValue()}</span>
-
-        {isMatchedPath && searchTerm && (
-          <span className="ml-2 px-1.5 py-0.5 rounded text-xs font-bold bg-green-600/50 text-green-200">
-            MATCH
-          </span>
-        )}
-
-        {diffStatus && (
-          <span
-            className={`ml-2 px-1.5 py-0.5 rounded text-xs font-bold ${
-              diffStatus === "added"
-                ? "bg-green-600/50 text-green-200"
-                : diffStatus === "removed"
-                ? "bg-red-600/50 text-red-200"
-                : "bg-yellow-600/50 text-yellow-200"
+      <div className="font-mono text-sm">
+        <div
+          ref={nodeRef}
+          data-path={path}
+          className={`flex items-center gap-1 py-1 px-2 hover:bg-slate-700/30 rounded cursor-pointer group transition-colors ${isPinned ? "ring-1 ring-purple-500/50" : ""
+            } ${isSelected
+              ? "ring-2 ring-purple-500"
+              : isCurrentMatch && searchTerm
+                ? "ring-2 ring-yellow-500"
+                : isMatchedPath && searchTerm
+                  ? "ring-1 ring-yellow-500/50"
+                  : ""
             }`}
-          >
-            {diffStatus.toUpperCase()}
-          </span>
-        )}
-
-        <button
-          onClick={handlePinClick}
-          className={`ml-auto p-0.5 rounded transition-opacity ${
-            isPinned
-              ? "opacity-100 text-purple-400 hover:text-purple-300"
-              : "opacity-0 group-hover:opacity-100 text-slate-400 hover:text-purple-400"
-          }`}
-          title={isPinned ? "Unpin path" : "Pin path to copy"}
+          style={{
+            paddingLeft: `${level * 20 + 8}px`,
+            backgroundColor: getBgColor(),
+          }}
+          onClick={handleClick}
+          onMouseEnter={() => onHover(path)}
+          onMouseLeave={() => !isPinned && onHover("")}
         >
-          <Pin className="w-3 h-3" />
-        </button>
-      </div>
+          <span className="w-4 h-4 flex-shrink-0">
+            {hasChildren &&
+              (isExpanded ? (
+                <ChevronDown className="w-4 h-4 text-purple-400" />
+              ) : (
+                <ChevronRight className="w-4 h-4 text-purple-400" />
+              ))}
+          </span>
 
-      {hasChildren && isExpanded && (
-        <div>
-          {isObject &&
-            Object.entries(value).map(([key, val]) => (
-              <TreeNode
-                key={key}
-                nodeKey={key}
-                value={val}
-                path={path ? `${path}.${key}` : key}
-                differences={differences}
-                isLeft={isLeft}
-                level={level + 1}
-                onHover={onHover}
-                onPin={onPin}
-                pinnedPath={pinnedPath}
-                searchMatches={searchMatches}
-                searchTerm={searchTerm}
-              />
-            ))}
-          {isArray &&
-            value.map((val, index) => (
-              <TreeNode
-                key={index}
-                nodeKey={index}
-                value={val}
-                path={`${path}[${index}]`}
-                differences={differences}
-                isLeft={isLeft}
-                level={level + 1}
-                onHover={onHover}
-                onPin={onPin}
-                pinnedPath={pinnedPath}
-                searchMatches={searchMatches}
-                searchTerm={searchTerm}
-              />
-            ))}
+          <span className={`text-blue-300 ${getTextColor()}`}>
+            {highlightText(String(nodeKey))}:
+          </span>
+
+          <span className="ml-1">{renderValue}</span>
+
+          {isCurrentMatch && searchTerm && (
+            <span className="ml-2 px-1.5 py-0.5 rounded text-xs font-bold bg-yellow-600 text-white animate-pulse">
+              CURRENT
+            </span>
+          )}
+
+          {isMatchedPath && !isCurrentMatch && searchTerm && (
+            <span className="ml-2 px-1.5 py-0.5 rounded text-xs font-bold bg-yellow-600/50 text-yellow-200">
+              MATCH
+            </span>
+          )}
+
+          {diffStatus && (
+            <span
+              className={`ml-2 px-1.5 py-0.5 rounded text-xs font-bold ${diffStatus === "added"
+                  ? "bg-green-600/50 text-green-200"
+                  : diffStatus === "removed"
+                    ? "bg-red-600/50 text-red-200"
+                    : "bg-yellow-600/50 text-yellow-200"
+                }`}
+            >
+              {diffStatus.toUpperCase()}
+            </span>
+          )}
+
+          <button
+            onClick={handlePinClick}
+            className={`ml-auto p-0.5 rounded transition-opacity ${isPinned
+                ? "opacity-100 text-purple-400 hover:text-purple-300"
+                : "opacity-0 group-hover:opacity-100 text-slate-400 hover:text-purple-400"
+              }`}
+            title={isPinned ? "Unpin path" : "Pin path to copy"}
+          >
+            <Pin className="w-3 h-3" />
+          </button>
         </div>
-      )}
-    </div>
-  );
-};
 
-// Path Display Header Component
-const PathHeader = ({ path, side, onClearPath }) => {
+        {hasChildren && isExpanded && (
+          <div>
+            {isObject &&
+              Object.entries(value).map(([key, val]) => (
+                <TreeNode
+                  key={key}
+                  nodeKey={key}
+                  value={val}
+                  path={path ? `${path}.${key}` : key}
+                  differences={differences}
+                  isLeft={isLeft}
+                  level={level + 1}
+                  onHover={onHover}
+                  onPin={onPin}
+                  pinnedPath={pinnedPath}
+                  searchMatches={searchMatches}
+                  searchTerm={searchTerm}
+                  currentMatchIndex={currentMatchIndex}
+                  expandedPaths={expandedPaths}
+                  selectedPath={selectedPath}
+                />
+              ))}
+            {isArray &&
+              value.map((val, index) => (
+                <TreeNode
+                  key={index}
+                  nodeKey={index}
+                  value={val}
+                  path={`${path}[${index}]`}
+                  differences={differences}
+                  isLeft={isLeft}
+                  level={level + 1}
+                  onHover={onHover}
+                  onPin={onPin}
+                  pinnedPath={pinnedPath}
+                  searchMatches={searchMatches}
+                  searchTerm={searchTerm}
+                  currentMatchIndex={currentMatchIndex}
+                  expandedPaths={expandedPaths}
+                  selectedPath={selectedPath}
+                />
+              ))}
+          </div>
+        )}
+      </div>
+    );
+  },
+  (prevProps, nextProps) => {
+    return (
+      prevProps.value === nextProps.value &&
+      prevProps.path === nextProps.path &&
+      prevProps.pinnedPath === nextProps.pinnedPath &&
+      prevProps.searchTerm === nextProps.searchTerm &&
+      prevProps.currentMatchIndex === nextProps.currentMatchIndex &&
+      prevProps.selectedPath === nextProps.selectedPath &&
+      prevProps.expandedPaths === nextProps.expandedPaths
+    );
+  }
+);
+
+TreeNode.displayName = "TreeNode";
+
+const PathHeader = memo(({ path, side, onClearPath }) => {
   const [copied, setCopied] = useState(false);
 
-  const copyPath = () => {
+  const copyPath = useCallback(() => {
     if (path) {
       navigator.clipboard.writeText(path).then(() => {
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
       });
     }
-  };
+  }, [path]);
 
   return (
     <div
-      className={`flex items-center gap-2 mb-3 pb-2 border-b ${
-        side === "left" ? "border-purple-500/30" : "border-blue-500/30"
-      }`}
+      className={`flex items-center gap-2 mb-3 pb-2 border-b ${side === "left" ? "border-purple-500/30" : "border-blue-500/30"
+        }`}
     >
       <span
-        className={`w-8 h-8 ${
-          side === "left" ? "bg-purple-600" : "bg-blue-600"
-        } rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0`}
+        className={`w-8 h-8 ${side === "left" ? "bg-purple-600" : "bg-blue-600"
+          } rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0`}
       >
         {side === "left" ? "1" : "2"}
       </span>
@@ -335,11 +416,10 @@ const PathHeader = ({ path, side, onClearPath }) => {
             <div className="flex gap-1 flex-shrink-0">
               <button
                 onClick={copyPath}
-                className={`p-1 rounded transition-colors ${
-                  copied
+                className={`p-1 rounded transition-colors ${copied
                     ? "bg-green-600/50 text-green-300"
                     : "bg-slate-700/50 hover:bg-slate-600/50 text-slate-300 hover:text-white"
-                }`}
+                  }`}
                 title="Copy path to clipboard"
               >
                 {copied ? (
@@ -358,65 +438,105 @@ const PathHeader = ({ path, side, onClearPath }) => {
             </div>
           </div>
         ) : (
-          <p className="text-xs p-2 text-slate-400 italic">
+          <p className="text-xs text-slate-400 mt-2 mb-2 italic">
             Click the pin icon on any node to show its path
           </p>
         )}
       </div>
     </div>
   );
-};
+});
 
-// Root Tree Component
-const JSONTree = ({
-  data,
-  differences,
-  isLeft,
-  title,
-  onPathHover,
-  currentPath,
-  onPathPin,
-  pinnedPath,
-  onClearPath,
-  searchMatches,
-  searchTerm,
-}) => {
-  if (!data) {
+PathHeader.displayName = "PathHeader";
+
+const JSONTree = memo(
+  ({
+    data,
+    differences,
+    isLeft,
+    onPathHover,
+    currentPath,
+    onPathPin,
+    pinnedPath,
+    onClearPath,
+    searchMatches,
+    searchTerm,
+    currentMatchIndex,
+    expandedPaths,
+    scrollRef,
+    selectedPath,
+  }) => {
+    if (!data) {
+      return (
+        <div className="text-slate-500 italic p-4 text-center">
+          No JSON data
+        </div>
+      );
+    }
+
     return (
-      <div className="text-slate-500 italic p-4 text-center">No JSON data</div>
-    );
-  }
-
-  return (
-    <div className="h-full">
-      <PathHeader
-        path={pinnedPath || currentPath}
-        side={isLeft ? "left" : "right"}
-        onClearPath={onClearPath}
-      />
-      <div className="max-h-[600px] overflow-auto bg-slate-900/70 rounded-lg p-2">
-        <div className="py-2">
-          {typeof data === "object" &&
-            Object.entries(data).map(([key, value]) => (
-              <TreeNode
-                key={key}
-                nodeKey={key}
-                value={value}
-                path={key}
-                differences={differences}
-                isLeft={isLeft}
-                level={0}
-                onHover={onPathHover}
-                onPin={onPathPin}
-                pinnedPath={pinnedPath}
-                searchMatches={searchMatches}
-                searchTerm={searchTerm}
-              />
-            ))}
+      <div className="h-full">
+        <PathHeader
+          path={pinnedPath || currentPath}
+          side={isLeft ? "left" : "right"}
+          onClearPath={onClearPath}
+        />
+        <div
+          ref={scrollRef}
+          className="max-h-[600px] overflow-auto bg-slate-900/70 rounded-lg p-2"
+        >
+          <div className="py-2">
+            {typeof data === "object" &&
+              Object.entries(data).map(([key, value]) => (
+                <TreeNode
+                  key={key}
+                  nodeKey={key}
+                  value={value}
+                  path={key}
+                  differences={differences}
+                  isLeft={isLeft}
+                  level={0}
+                  onHover={onPathHover}
+                  onPin={onPathPin}
+                  pinnedPath={pinnedPath}
+                  searchMatches={searchMatches}
+                  searchTerm={searchTerm}
+                  currentMatchIndex={currentMatchIndex}
+                  expandedPaths={expandedPaths}
+                  selectedPath={selectedPath}
+                />
+              ))}
+          </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  }
+);
+
+JSONTree.displayName = "JSONTree";
+
+const sampleJSON1 = {
+  name: "John Doe",
+  age: 30,
+  email: "john@example.com",
+  address: {
+    city: "New York",
+    country: "USA",
+    zipCode: "10001",
+  },
+  hobbies: ["reading", "gaming"],
+};
+
+const sampleJSON2 = {
+  name: "John Doe",
+  age: 31,
+  email: "john.doe@example.com",
+  address: {
+    city: "Los Angeles",
+    country: "USA",
+    zipCode: "90001",
+  },
+  hobbies: ["reading", "coding", "gaming"],
 };
 
 const JSONCompare = () => {
@@ -430,6 +550,8 @@ const JSONCompare = () => {
   const [fileName2, setFileName2] = useState("");
   const [dragOver1, setDragOver1] = useState(false);
   const [dragOver2, setDragOver2] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [filterType, setFilterType] = useState("all");
   const [isMinified1, setIsMinified1] = useState(false);
   const [isMinified2, setIsMinified2] = useState(false);
   const [copied, setCopied] = useState("");
@@ -441,45 +563,87 @@ const JSONCompare = () => {
   const [pinnedPath2, setPinnedPath2] = useState("");
   const [searchTerm1, setSearchTerm1] = useState("");
   const [searchTerm2, setSearchTerm2] = useState("");
+  const [currentMatchIndex1, setCurrentMatchIndex1] = useState(-1);
+  const [currentMatchIndex2, setCurrentMatchIndex2] = useState(-1);
+  const [selectedDiffPath, setSelectedDiffPath] = useState("");
 
+  const scrollRef1 = useRef(null);
+  const scrollRef2 = useRef(null);
   const fileInput1Ref = useRef(null);
   const fileInput2Ref = useRef(null);
 
-  const sampleJSON1 = {
-    name: "John Doe",
-    age: 30,
-    email: "john@example.com",
-    address: {
-      city: "New York",
-      country: "USA",
-    },
-    hobbies: ["reading", "gaming"],
-  };
+  const debouncedSearchTerm1 = useDebounce(searchTerm1, 500);
+  const debouncedSearchTerm2 = useDebounce(searchTerm2, 500);
 
-  const sampleJSON2 = {
-    name: "John Doe",
-    age: 31,
-    email: "john.doe@example.com",
-    address: {
-      city: "Los Angeles",
-      country: "USA",
-    },
-    hobbies: ["reading", "coding", "gaming"],
-  };
-
-  // Search matches for JSON 1
   const searchMatches1 = useMemo(() => {
-    if (!searchTerm1 || !parsedJson1) return [];
-    return searchInObject(parsedJson1, searchTerm1);
-  }, [searchTerm1, parsedJson1]);
+    if (!debouncedSearchTerm1 || !parsedJson1) return [];
+    return searchInObject(parsedJson1, debouncedSearchTerm1);
+  }, [debouncedSearchTerm1, parsedJson1]);
 
-  // Search matches for JSON 2
   const searchMatches2 = useMemo(() => {
-    if (!searchTerm2 || !parsedJson2) return [];
-    return searchInObject(parsedJson2, searchTerm2);
-  }, [searchTerm2, parsedJson2]);
+    if (!debouncedSearchTerm2 || !parsedJson2) return [];
+    return searchInObject(parsedJson2, debouncedSearchTerm2);
+  }, [debouncedSearchTerm2, parsedJson2]);
 
-  const validateJSON = (text, setError) => {
+  const expandedPaths1 = useMemo(() => {
+    const paths = new Set();
+    searchMatches1.forEach((match) => {
+      match.parents.forEach((parent) => paths.add(parent));
+      paths.add(match.path);
+    });
+    if (selectedDiffPath) {
+      let currentPath = "";
+      const pathParts = selectedDiffPath.split(/\.|\[/).filter(Boolean);
+
+      pathParts.forEach((part, index) => {
+        const cleanPart = part.replace("]", "");
+
+        if (index === 0) {
+          currentPath = cleanPart;
+        } else {
+          if (selectedDiffPath.includes(`[${cleanPart}]`)) {
+            currentPath += `[${cleanPart}]`;
+          } else {
+            currentPath += `.${cleanPart}`;
+          }
+        }
+        paths.add(currentPath);
+      });
+      paths.add(selectedDiffPath);
+    }
+    return paths;
+  }, [searchMatches1, selectedDiffPath]);
+
+  const expandedPaths2 = useMemo(() => {
+    const paths = new Set();
+    searchMatches2.forEach((match) => {
+      match.parents.forEach((parent) => paths.add(parent));
+      paths.add(match.path);
+    });
+    if (selectedDiffPath) {
+      let currentPath = "";
+      const pathParts = selectedDiffPath.split(/\.|\[/).filter(Boolean);
+
+      pathParts.forEach((part, index) => {
+        const cleanPart = part.replace("]", "");
+
+        if (index === 0) {
+          currentPath = cleanPart;
+        } else {
+          if (selectedDiffPath.includes(`[${cleanPart}]`)) {
+            currentPath += `[${cleanPart}]`;
+          } else {
+            currentPath += `.${cleanPart}`;
+          }
+        }
+        paths.add(currentPath);
+      });
+      paths.add(selectedDiffPath);
+    }
+    return paths;
+  }, [searchMatches2, selectedDiffPath]);
+
+  const validateJSON = useCallback((text, setError) => {
     if (!text.trim()) {
       setError("");
       return null;
@@ -492,10 +656,53 @@ const JSONCompare = () => {
       setError(e.message);
       return null;
     }
-  };
+  }, []);
 
-  const compareJSON = (obj1, obj2, path = "") => {
+  const compareJSON = useCallback((obj1, obj2, path = "") => {
     const differences = [];
+
+    if (Array.isArray(obj1) && Array.isArray(obj2)) {
+      const maxLength = Math.max(obj1.length, obj2.length);
+
+      for (let i = 0; i < maxLength; i++) {
+        const currentPath = `${path}[${i}]`;
+
+        if (i >= obj1.length) {
+          differences.push({
+            path: currentPath,
+            type: "added",
+            value: obj2[i],
+          });
+        } else if (i >= obj2.length) {
+          differences.push({
+            path: currentPath,
+            type: "removed",
+            value: obj1[i],
+          });
+        } else {
+          const val1 = obj1[i];
+          const val2 = obj2[i];
+
+          if (
+            typeof val1 === "object" &&
+            val1 !== null &&
+            typeof val2 === "object" &&
+            val2 !== null
+          ) {
+            differences.push(...compareJSON(val1, val2, currentPath));
+          } else if (val1 !== val2) {
+            differences.push({
+              path: currentPath,
+              type: "modified",
+              oldValue: val1,
+              newValue: val2,
+            });
+          }
+        }
+      }
+
+      return differences;
+    }
 
     const allKeys = new Set([
       ...Object.keys(obj1 || {}),
@@ -526,14 +733,7 @@ const JSONCompare = () => {
         val2 !== null
       ) {
         if (Array.isArray(val1) && Array.isArray(val2)) {
-          if (JSON.stringify(val1) !== JSON.stringify(val2)) {
-            differences.push({
-              path: currentPath,
-              type: "modified",
-              oldValue: val1,
-              newValue: val2,
-            });
-          }
+          differences.push(...compareJSON(val1, val2, currentPath));
         } else if (!Array.isArray(val1) && !Array.isArray(val2)) {
           differences.push(...compareJSON(val1, val2, currentPath));
         } else {
@@ -555,9 +755,9 @@ const JSONCompare = () => {
     });
 
     return differences;
-  };
+  }, []);
 
-  const handleCompare = () => {
+  const handleCompare = useCallback(() => {
     const parsed1 = validateJSON(json1, setError1);
     const parsed2 = validateJSON(json2, setError2);
 
@@ -568,9 +768,9 @@ const JSONCompare = () => {
       setComparison(diffs);
       setShowComparison(true);
     }
-  };
+  }, [json1, json2, validateJSON, compareJSON]);
 
-  const loadSamples = () => {
+  const loadSamples = useCallback(() => {
     setJson1(JSON.stringify(sampleJSON1, null, 2));
     setJson2(JSON.stringify(sampleJSON2, null, 2));
     setError1("");
@@ -580,9 +780,9 @@ const JSONCompare = () => {
     setShowComparison(false);
     setIsMinified1(false);
     setIsMinified2(false);
-  };
+  }, []);
 
-  const reset = () => {
+  const reset = useCallback(() => {
     setJson1("");
     setJson2("");
     setError1("");
@@ -591,6 +791,8 @@ const JSONCompare = () => {
     setShowComparison(false);
     setFileName1("");
     setFileName2("");
+    setSearchTerm("");
+    setFilterType("all");
     setIsMinified1(false);
     setIsMinified2(false);
     setParsedJson1(null);
@@ -601,29 +803,38 @@ const JSONCompare = () => {
     setPinnedPath2("");
     setSearchTerm1("");
     setSearchTerm2("");
-  };
+    setCurrentMatchIndex1(-1);
+    setCurrentMatchIndex2(-1);
+    setSelectedDiffPath("");
+  }, []);
 
-  const formatJSON = (text, setJSON, setError) => {
-    const parsed = validateJSON(text, setError);
-    if (parsed) {
-      setJSON(JSON.stringify(parsed, null, 2));
-    }
-  };
-
-  const toggleMinify = (json, setJSON, isMinified, setIsMinified, setError) => {
-    const parsed = validateJSON(json, setError);
-    if (parsed) {
-      if (isMinified) {
+  const formatJSON = useCallback(
+    (text, setJSON, setError) => {
+      const parsed = validateJSON(text, setError);
+      if (parsed) {
         setJSON(JSON.stringify(parsed, null, 2));
-        setIsMinified(false);
-      } else {
-        setJSON(JSON.stringify(parsed));
-        setIsMinified(true);
       }
-    }
-  };
+    },
+    [validateJSON]
+  );
 
-  const swapJSONs = () => {
+  const toggleMinify = useCallback(
+    (json, setJSON, isMinified, setIsMinified, setError) => {
+      const parsed = validateJSON(json, setError);
+      if (parsed) {
+        if (isMinified) {
+          setJSON(JSON.stringify(parsed, null, 2));
+          setIsMinified(false);
+        } else {
+          setJSON(JSON.stringify(parsed));
+          setIsMinified(true);
+        }
+      }
+    },
+    [validateJSON]
+  );
+
+  const swapJSONs = useCallback(() => {
     const tempJSON = json1;
     const tempError = error1;
     const tempFileName = fileName1;
@@ -642,66 +853,27 @@ const JSONCompare = () => {
     if (showComparison) {
       setTimeout(handleCompare, 100);
     }
-  };
+  }, [
+    json1,
+    json2,
+    error1,
+    error2,
+    fileName1,
+    fileName2,
+    isMinified1,
+    isMinified2,
+    showComparison,
+    handleCompare,
+  ]);
 
-  const copyToClipboard = (text, type) => {
+  const copyToClipboard = useCallback((text, type) => {
     navigator.clipboard.writeText(text).then(() => {
       setCopied(type);
       setTimeout(() => setCopied(""), 2000);
     });
-  };
+  }, []);
 
-  const exportAsJSON = () => {
-    const stats = getStatistics();
-    const data = {
-      comparison: comparison,
-      statistics: stats,
-      json1: parsedJson1,
-      json2: parsedJson2,
-    };
-    const blob = new Blob([JSON.stringify(data, null, 2)], {
-      type: "application/json",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "json-comparison.json";
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const exportAsText = () => {
-    const stats = getStatistics();
-    let text = "=== JSON COMPARISON REPORT ===\n\n";
-    text += `Total Differences: ${comparison.length}\n`;
-    text += `Added: ${stats.added}\n`;
-    text += `Removed: ${stats.removed}\n`;
-    text += `Modified: ${stats.modified}\n\n`;
-    text += "=== DETAILED DIFFERENCES ===\n\n";
-
-    comparison.forEach((diff, index) => {
-      text += `${index + 1}. [${diff.type.toUpperCase()}] ${diff.path}\n`;
-      if (diff.type === "added") {
-        text += `   + Value: ${JSON.stringify(diff.value)}\n`;
-      } else if (diff.type === "removed") {
-        text += `   - Value: ${JSON.stringify(diff.value)}\n`;
-      } else {
-        text += `   - Old: ${JSON.stringify(diff.oldValue)}\n`;
-        text += `   + New: ${JSON.stringify(diff.newValue)}\n`;
-      }
-      text += "\n";
-    });
-
-    const blob = new Blob([text], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "json-comparison.txt";
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const getStatistics = () => {
+  const getStatistics = useCallback(() => {
     if (!comparison) return { total: 0, added: 0, removed: 0, modified: 0 };
 
     return {
@@ -710,66 +882,159 @@ const JSONCompare = () => {
       removed: comparison.filter((d) => d.type === "removed").length,
       modified: comparison.filter((d) => d.type === "modified").length,
     };
-  };
+  }, [comparison]);
 
-  const handleFileRead = (file, setJSON, setError, setFileName) => {
-    if (!file) return;
+  const getFilteredComparison = useCallback(() => {
+    if (!comparison) return [];
 
-    if (!file.name.endsWith(".json")) {
-      setError("Please upload a JSON file");
-      return;
+    let filtered = comparison;
+
+    if (filterType !== "all") {
+      filtered = filtered.filter((d) => d.type === filterType);
     }
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const content = e.target.result;
-      setJSON(content);
-      validateJSON(content, setError);
-      setFileName(file.name);
-    };
-    reader.onerror = () => {
-      setError("Failed to read file");
-    };
-    reader.readAsText(file);
-  };
+    if (searchTerm) {
+      filtered = filtered.filter((d) =>
+        d.path.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+    }
 
-  const handleFileUpload = (e, setJSON, setError, setFileName) => {
-    const file = e.target.files[0];
-    handleFileRead(file, setJSON, setError, setFileName);
-  };
+    return filtered;
+  }, [comparison, filterType, searchTerm]);
 
-  const handleDragOver = (e, setDragOver) => {
+  const handleFileRead = useCallback(
+    (file, setJSON, setError, setFileName) => {
+      if (!file) return;
+
+      if (!file.name.endsWith(".json")) {
+        setError("Please upload a JSON file");
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const content = e.target.result;
+        setJSON(content);
+        validateJSON(content, setError);
+        setFileName(file.name);
+      };
+      reader.onerror = () => {
+        setError("Failed to read file");
+      };
+      reader.readAsText(file);
+    },
+    [validateJSON]
+  );
+
+  const handleFileUpload = useCallback(
+    (e, setJSON, setError, setFileName) => {
+      const file = e.target.files[0];
+      handleFileRead(file, setJSON, setError, setFileName);
+    },
+    [handleFileRead]
+  );
+
+  const handleDragOver = useCallback((e, setDragOver) => {
     e.preventDefault();
     setDragOver(true);
-  };
+  }, []);
 
-  const handleDragLeave = (e, setDragOver) => {
+  const handleDragLeave = useCallback((e, setDragOver) => {
     e.preventDefault();
     setDragOver(false);
-  };
+  }, []);
 
-  const handleDrop = (e, setJSON, setError, setFileName, setDragOver) => {
-    e.preventDefault();
-    setDragOver(false);
+  const handleDrop = useCallback(
+    (e, setJSON, setError, setFileName, setDragOver) => {
+      e.preventDefault();
+      setDragOver(false);
 
-    const file = e.dataTransfer.files[0];
-    handleFileRead(file, setJSON, setError, setFileName);
-  };
+      const file = e.dataTransfer.files[0];
+      handleFileRead(file, setJSON, setError, setFileName);
+    },
+    [handleFileRead]
+  );
 
-  const handlePinPath1 = (path) => {
-    setPinnedPath1(pinnedPath1 === path ? "" : path);
-  };
+  const handlePinPath1 = useCallback(
+    (path) => {
+      setPinnedPath1(pinnedPath1 === path ? "" : path);
+    },
+    [pinnedPath1]
+  );
 
-  const handlePinPath2 = (path) => {
-    setPinnedPath2(pinnedPath2 === path ? "" : path);
-  };
+  const handlePinPath2 = useCallback(
+    (path) => {
+      setPinnedPath2(pinnedPath2 === path ? "" : path);
+    },
+    [pinnedPath2]
+  );
 
-  const stats = getStatistics();
+  const handleSearchKeyDown1 = useCallback(
+    (e) => {
+      if (e.key === "Enter" && searchMatches1.length > 0) {
+        e.preventDefault();
+        const nextIndex = (currentMatchIndex1 + 1) % searchMatches1.length;
+        setCurrentMatchIndex1(nextIndex);
+      }
+    },
+    [searchMatches1, currentMatchIndex1]
+  );
+
+  const handleSearchKeyDown2 = useCallback(
+    (e) => {
+      if (e.key === "Enter" && searchMatches2.length > 0) {
+        e.preventDefault();
+        const nextIndex = (currentMatchIndex2 + 1) % searchMatches2.length;
+        setCurrentMatchIndex2(nextIndex);
+      }
+    },
+    [searchMatches2, currentMatchIndex2]
+  );
+
+  const handleDiffClick = useCallback((path) => {
+    setSelectedDiffPath(path);
+    setPinnedPath1(path);
+    setPinnedPath2(path);
+
+    setTimeout(() => {
+      const element1 = scrollRef1.current?.querySelector(
+        `[data-path="${path}"]`
+      );
+      const element2 = scrollRef2.current?.querySelector(
+        `[data-path="${path}"]`
+      );
+
+      if (element1) {
+        element1.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+      if (element2) {
+        element2.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }, 400);
+  }, []);
+
+  useEffect(() => {
+    setCurrentMatchIndex1(-1);
+  }, [debouncedSearchTerm1]);
+
+  useEffect(() => {
+    setCurrentMatchIndex2(-1);
+  }, [debouncedSearchTerm2]);
+
+  const stats = useMemo(() => getStatistics(), [getStatistics]);
+  const filteredComparison = useMemo(
+    () => getFilteredComparison(),
+    [getFilteredComparison]
+  );
+
+  const truncateValue = useCallback((val, maxLength = 50) => {
+    const str = JSON.stringify(val);
+    return str.length > maxLength ? str.substring(0, maxLength) + "..." : str;
+  }, []);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-4">
       <div className="max-w-7xl mx-auto">
-        {/* Header */}
         <div className="text-center mb-8 pt-8">
           <div className="flex items-center justify-center gap-3 mb-4">
             <FileJson className="w-12 h-12 text-purple-400" />
@@ -780,7 +1045,6 @@ const JSONCompare = () => {
           </p>
         </div>
 
-        {/* Action Buttons */}
         <div className="flex gap-3 mb-6 justify-center flex-wrap">
           <button
             onClick={loadSamples}
@@ -813,10 +1077,8 @@ const JSONCompare = () => {
           </button>
         </div>
 
-        {/* Side-by-Side Tree Comparison */}
         {showComparison && comparison && (
           <div className="mb-6">
-            {/* Comparison Header with Stats and Controls */}
             <div className="bg-slate-800/50 backdrop-blur rounded-t-xl p-4 border border-purple-500/30 border-b-0">
               <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
                 <div className="flex items-center gap-4 flex-wrap">
@@ -846,41 +1108,119 @@ const JSONCompare = () => {
                   </div>
                 </div>
 
-                {comparison.length > 0 && (
-                  <div className="flex gap-2 flex-wrap">
-                    <button
-                      onClick={() =>
-                        copyToClipboard(
-                          JSON.stringify(comparison, null, 2),
-                          "results"
-                        )
-                      }
-                      className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg flex items-center gap-2 text-sm transition-colors"
+                <div className="flex gap-2 flex-wrap items-center">
+                  <div className="relative">
+                    <Filter className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-purple-400 pointer-events-none" />
+                    <select
+                      value={filterType}
+                      onChange={(e) => setFilterType(e.target.value)}
+                      className="pl-10 pr-4 py-1.5 bg-slate-700 text-white rounded-lg border border-slate-600 focus:border-purple-500 focus:outline-none text-sm appearance-none cursor-pointer"
                     >
-                      {copied === "results" ? (
-                        <Check className="w-4 h-4" />
-                      ) : (
-                        <Copy className="w-4 h-4" />
-                      )}
-                      {copied === "results" ? "Copied!" : "Copy"}
-                    </button>
-                    <button
-                      onClick={exportAsJSON}
-                      className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg flex items-center gap-2 text-sm transition-colors"
-                    >
-                      <Download className="w-4 h-4" />
-                      JSON
-                    </button>
-                    <button
-                      onClick={exportAsText}
-                      className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg flex items-center gap-2 text-sm transition-colors"
-                    >
-                      <Download className="w-4 h-4" />
-                      Text
-                    </button>
+                      <option value="all">All Changes</option>
+                      <option value="added">Added Only</option>
+                      <option value="removed">Removed Only</option>
+                      <option value="modified">Modified Only</option>
+                    </select>
                   </div>
-                )}
+
+                  {comparison.length > 0 && (
+                    <>
+                      <button
+                        onClick={() =>
+                          copyToClipboard(
+                            JSON.stringify(comparison, null, 2),
+                            "results"
+                          )
+                        }
+                        className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg flex items-center gap-2 text-sm transition-colors"
+                      >
+                        {copied === "results" ? (
+                          <Check className="w-4 h-4" />
+                        ) : (
+                          <Copy className="w-4 h-4" />
+                        )}
+                        {copied === "results" ? "Copied!" : "Copy"}
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
+
+              {filteredComparison.length > 0 && (
+                <div className="mt-4 max-h-60 overflow-y-auto bg-slate-900/50 rounded-lg p-3">
+                  <div className="text-sm text-purple-200 mb-3 font-semibold flex items-center gap-2">
+                    <Eye className="w-4 h-4" />
+                    {filteredComparison.length} Difference(s) - Click to view
+                  </div>
+                  <div className="space-y-2">
+                    {filteredComparison.map((diff, index) => (
+                      <div
+                        key={index}
+                        onClick={() => handleDiffClick(diff.path)}
+                        className={`p-2 rounded-lg border cursor-pointer transition-all hover:scale-[1.01] ${selectedDiffPath === diff.path
+                            ? "border-purple-500 bg-purple-900/30 ring-2 ring-purple-500"
+                            : "border-slate-700 bg-slate-800/30 hover:border-slate-600"
+                          } ${diff.type === "added"
+                            ? "hover:bg-green-900/20"
+                            : diff.type === "removed"
+                              ? "hover:bg-red-900/20"
+                              : "hover:bg-yellow-900/20"
+                          }`}
+                      >
+                        <div className="flex items-center gap-2 mb-1">
+                          <span
+                            className={`px-2 py-0.5 rounded text-xs font-bold ${diff.type === "added"
+                                ? "bg-green-600/50 text-green-200"
+                                : diff.type === "removed"
+                                  ? "bg-red-600/50 text-red-200"
+                                  : "bg-yellow-600/50 text-yellow-200"
+                              }`}
+                          >
+                            {diff.type.toUpperCase()}
+                          </span>
+                          <code className="text-xs text-purple-300 font-mono">
+                            {diff.path}
+                          </code>
+                        </div>
+                        <div className="text-xs text-slate-300 font-mono ml-2">
+                          {diff.type === "added" && (
+                            <div className="flex items-center gap-1">
+                              <span className="text-green-400">+</span>
+                              <span className="text-emerald-300">
+                                {truncateValue(diff.value)}
+                              </span>
+                            </div>
+                          )}
+                          {diff.type === "removed" && (
+                            <div className="flex items-center gap-1">
+                              <span className="text-red-400">-</span>
+                              <span className="text-red-300">
+                                {truncateValue(diff.value)}
+                              </span>
+                            </div>
+                          )}
+                          {diff.type === "modified" && (
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-1">
+                                <span className="text-red-400">-</span>
+                                <span className="text-red-300">
+                                  {truncateValue(diff.oldValue)}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <span className="text-green-400">+</span>
+                                <span className="text-green-300">
+                                  {truncateValue(diff.newValue)}
+                                </span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             {comparison.length === 0 ? (
@@ -893,96 +1233,120 @@ const JSONCompare = () => {
               </div>
             ) : (
               <div className="bg-slate-800/50 backdrop-blur rounded-b-xl border border-purple-500/30 border-t-0 overflow-hidden">
-                {/* Search Bars */}
                 <div className="grid md:grid-cols-2 gap-4 bg-slate-900/30 p-4">
-                  {/* Search for JSON 1 */}
                   <div>
                     <div className="relative">
                       <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-purple-400 pointer-events-none" />
                       <input
                         type="text"
-                        placeholder="Search in first JSON (key or value)..."
+                        placeholder="Search (typing appears immediately)..."
                         value={searchTerm1}
                         onChange={(e) => setSearchTerm1(e.target.value)}
+                        onKeyDown={handleSearchKeyDown1}
                         className="w-full pl-10 pr-10 py-2 bg-slate-900/50 text-white rounded-lg border border-slate-700 focus:border-purple-500 focus:outline-none text-sm"
                       />
                       {searchTerm1 && (
                         <button
-                          onClick={() => setSearchTerm1("")}
+                          onClick={() => {
+                            setSearchTerm1("");
+                            setCurrentMatchIndex1(-1);
+                          }}
                           className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition-colors"
                         >
                           <X className="w-4 h-4" />
                         </button>
                       )}
                     </div>
-                    {searchTerm1 && (
-                      <div className="mt-2 text-xs text-yellow-400">
-                        {searchMatches1.length} match(es) found
+                    {debouncedSearchTerm1 && (
+                      <div className="mt-2 text-xs text-yellow-400 flex items-center justify-between">
+                        <span>{searchMatches1.length} match(es)</span>
+                        {searchMatches1.length > 0 && (
+                          <span className="text-purple-300">
+                            {currentMatchIndex1 >= 0
+                              ? `${currentMatchIndex1 + 1}/${searchMatches1.length
+                              }`
+                              : "Press Enter →"}
+                          </span>
+                        )}
                       </div>
                     )}
                   </div>
 
-                  {/* Search for JSON 2 */}
                   <div>
                     <div className="relative">
                       <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-blue-400 pointer-events-none" />
                       <input
                         type="text"
-                        placeholder="Search in second JSON (key or value)..."
+                        placeholder="Search (typing appears immediately)..."
                         value={searchTerm2}
                         onChange={(e) => setSearchTerm2(e.target.value)}
+                        onKeyDown={handleSearchKeyDown2}
                         className="w-full pl-10 pr-10 py-2 bg-slate-900/50 text-white rounded-lg border border-slate-700 focus:border-blue-500 focus:outline-none text-sm"
                       />
                       {searchTerm2 && (
                         <button
-                          onClick={() => setSearchTerm2("")}
+                          onClick={() => {
+                            setSearchTerm2("");
+                            setCurrentMatchIndex2(-1);
+                          }}
                           className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition-colors"
                         >
                           <X className="w-4 h-4" />
                         </button>
                       )}
                     </div>
-                    {searchTerm2 && (
-                      <div className="mt-2 text-xs text-yellow-400">
-                        {searchMatches2.length} match(es) found
+                    {debouncedSearchTerm2 && (
+                      <div className="mt-2 text-xs text-yellow-400 flex items-center justify-between">
+                        <span>{searchMatches2.length} match(es)</span>
+                        {searchMatches2.length > 0 && (
+                          <span className="text-purple-300">
+                            {currentMatchIndex2 >= 0
+                              ? `${currentMatchIndex2 + 1}/${searchMatches2.length
+                              }`
+                              : "Press Enter →"}
+                          </span>
+                        )}
                       </div>
                     )}
                   </div>
                 </div>
 
-                {/* Side-by-Side Tree Grid */}
                 <div className="grid md:grid-cols-2 gap-px bg-slate-700/30">
-                  {/* Left Tree */}
                   <div className="bg-slate-900/50 p-4">
                     <JSONTree
                       data={parsedJson1}
                       differences={comparison}
                       isLeft={true}
-                      title="First JSON"
                       onPathHover={setHoveredPath1}
                       currentPath={hoveredPath1}
                       onPathPin={handlePinPath1}
                       pinnedPath={pinnedPath1}
                       onClearPath={() => setPinnedPath1("")}
                       searchMatches={searchMatches1}
-                      searchTerm={searchTerm1}
+                      searchTerm={debouncedSearchTerm1}
+                      currentMatchIndex={currentMatchIndex1}
+                      expandedPaths={expandedPaths1}
+                      scrollRef={scrollRef1}
+                      selectedPath={selectedDiffPath}
                     />
                   </div>
 
-                  {/* Right Tree */}
                   <div className="bg-slate-900/50 p-4">
                     <JSONTree
                       data={parsedJson2}
                       differences={comparison}
                       isLeft={false}
-                      title="Second JSON"
                       onPathHover={setHoveredPath2}
                       currentPath={hoveredPath2}
                       onPathPin={handlePinPath2}
                       pinnedPath={pinnedPath2}
                       onClearPath={() => setPinnedPath2("")}
                       searchMatches={searchMatches2}
-                      searchTerm={searchTerm2}
+                      searchTerm={debouncedSearchTerm2}
+                      currentMatchIndex={currentMatchIndex2}
+                      expandedPaths={expandedPaths2}
+                      scrollRef={scrollRef2}
+                      selectedPath={selectedDiffPath}
                     />
                   </div>
                 </div>
@@ -991,9 +1355,7 @@ const JSONCompare = () => {
           </div>
         )}
 
-        {/* JSON Input Areas */}
         <div className="grid md:grid-cols-2 gap-4">
-          {/* JSON 1 */}
           <div className="bg-slate-800/50 backdrop-blur rounded-xl p-4 border border-purple-500/30">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-xl font-semibold text-white flex items-center gap-2">
@@ -1071,9 +1433,8 @@ const JSONCompare = () => {
               onDrop={(e) =>
                 handleDrop(e, setJson1, setError1, setFileName1, setDragOver1)
               }
-              className={`relative ${
-                dragOver1 ? "ring-2 ring-purple-500" : ""
-              }`}
+              className={`relative ${dragOver1 ? "ring-2 ring-purple-500" : ""
+                }`}
             >
               <textarea
                 value={json1}
@@ -1108,7 +1469,6 @@ const JSONCompare = () => {
             )}
           </div>
 
-          {/* JSON 2 */}
           <div className="bg-slate-800/50 backdrop-blur rounded-xl p-4 border border-purple-500/30">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-xl font-semibold text-white flex items-center gap-2">

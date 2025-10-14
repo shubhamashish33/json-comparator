@@ -21,7 +21,6 @@ A powerful, feature-rich web application for comparing JSON objects and visualiz
 ### Advanced Features
 - **Search and filter results** by path or change type
 - **Statistics dashboard** showing comparison overview
-- **Export capabilities**: JSON and text format reports
 - **Responsive design** with mobile-friendly interface
 - **Dark theme** with purple and slate color scheme
 
