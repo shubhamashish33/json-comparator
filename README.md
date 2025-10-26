@@ -2,6 +2,10 @@
 
 A powerful, feature-rich web application for comparing JSON objects and visualizing differences with an intuitive interface. Built with React and styled with a modern dark theme.
 
+
+<img width="1920" height="1440" alt="280shots_so" src="https://github.com/user-attachments/assets/92115ddf-0d0d-4ae4-9697-7eb16e44bc54" />
+
+
 ## 🚀 Features
 
 ### Core Functionality
