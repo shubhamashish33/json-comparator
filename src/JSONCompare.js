@@ -1048,7 +1048,7 @@ const JSONCompare = () => {
 
           {showComparison && (
             <div className="overflow-hidden rounded-xl border border-purple-500/30 bg-slate-800/50 backdrop-blur">
-              <div className="sticky top-16 z-30 rounded-t-xl border-b border-slate-700/70 bg-slate-800/95 p-4 backdrop-blur">
+              <div className="sticky top-0 z-30 rounded-t-xl border-b border-slate-700/70 bg-slate-800/95 p-4 backdrop-blur">
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <h3 className="flex items-center gap-2 text-xl font-semibold text-white"><GitCompare className="h-5 w-5 text-purple-400" /> Comparison Results</h3>
