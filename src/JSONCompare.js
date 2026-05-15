@@ -431,10 +431,14 @@ const EditorPanel = ({
   isMinified,
 }) => {
   const tone = side === "left" ? "purple" : "blue";
+  const buttonTone = side === "left"
+    ? "bg-purple-600/60 hover:bg-purple-600"
+    : "bg-blue-600/60 hover:bg-blue-600";
+
   return (
-    <div className={`rounded-xl border border-${tone}-500/30 bg-slate-800/50 p-4 backdrop-blur`}>
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <div>
+    <div className={`min-w-0 overflow-hidden rounded-xl border border-${tone}-500/30 bg-slate-800/50 p-4 backdrop-blur`}>
+      <div className="mb-3 flex min-w-0 flex-col gap-3 2xl:flex-row 2xl:items-start 2xl:justify-between">
+        <div className="min-w-0">
           <h3 className="flex items-center gap-2 text-xl font-semibold text-white">
             <span className={`flex h-8 w-8 items-center justify-center rounded-full bg-${tone}-600 text-sm`}>{side === "left" ? "1" : "2"}</span>
             {title}
@@ -446,21 +450,21 @@ const EditorPanel = ({
             </div>
           )}
         </div>
-        <div className="flex flex-wrap justify-end gap-2">
-          <button onClick={onPaste} className="rounded bg-slate-700/70 px-3 py-1 text-sm text-white hover:bg-slate-600">
+        <div className="grid min-w-0 grid-cols-3 gap-2 sm:flex sm:flex-wrap sm:justify-start 2xl:justify-end">
+          <button onClick={onPaste} className="inline-flex items-center justify-center gap-1 rounded bg-slate-700/70 px-2.5 py-1 text-sm text-white hover:bg-slate-600">
             <Clipboard className="inline h-3 w-3" /> Paste
           </button>
-          <button onClick={() => inputRef.current?.click()} className={`rounded bg-${tone}-600/60 px-3 py-1 text-sm text-white hover:bg-${tone}-600`}>
+          <button onClick={() => inputRef.current?.click()} className={`inline-flex items-center justify-center gap-1 rounded px-2.5 py-1 text-sm text-white ${buttonTone}`}>
             <Upload className="inline h-3 w-3" /> Upload
           </button>
-          <button onClick={onFormat} className={`rounded bg-${tone}-600/60 px-3 py-1 text-sm text-white hover:bg-${tone}-600`}>Format</button>
-          <button onClick={onMinify} title={isMinified ? "Expand" : "Minify"} className={`rounded bg-${tone}-600/60 px-3 py-1 text-sm text-white hover:bg-${tone}-600`}>
+          <button onClick={onFormat} className={`rounded px-2.5 py-1 text-sm text-white ${buttonTone}`}>Format</button>
+          <button onClick={onMinify} title={isMinified ? "Expand" : "Minify"} className={`inline-flex items-center justify-center rounded px-2.5 py-1 text-sm text-white ${buttonTone}`}>
             {isMinified ? <Maximize2 className="inline h-3 w-3" /> : <Minimize2 className="inline h-3 w-3" />}
           </button>
-          <button onClick={onRepair} title="Repair common JSON-ish input" className={`rounded bg-${tone}-600/60 px-3 py-1 text-sm text-white hover:bg-${tone}-600`}>
+          <button onClick={onRepair} title="Repair common JSON-ish input" className={`inline-flex items-center justify-center rounded px-2.5 py-1 text-sm text-white ${buttonTone}`}>
             <Wand2 className="inline h-3 w-3" />
           </button>
-          <button onClick={onCopy} className={`rounded bg-${tone}-600/60 px-3 py-1 text-sm text-white hover:bg-${tone}-600`}>
+          <button onClick={onCopy} className={`inline-flex items-center justify-center rounded px-2.5 py-1 text-sm text-white ${buttonTone}`}>
             <Copy className="inline h-3 w-3" />
           </button>
         </div>
