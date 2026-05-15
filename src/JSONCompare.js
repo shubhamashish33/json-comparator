@@ -47,7 +47,6 @@ const STORAGE_KEYS = {
   json2: "json-comparator-json2",
   settings: "json-comparator-settings",
   editor: "json-comparator-editor-settings",
-  history: "json-comparator-history",
   schema: "json-comparator-schema",
 };
 
@@ -192,12 +191,6 @@ const TreeNode = memo(
     useEffect(() => {
       if (globalExpandToggle > 0) setIsExpanded(globalExpandAction === "expand");
     }, [globalExpandAction, globalExpandToggle]);
-
-    useEffect(() => {
-      if ((isSelected || isCurrentMatch) && nodeRef.current) {
-        setTimeout(() => nodeRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 150);
-      }
-    }, [isSelected, isCurrentMatch]);
 
     const highlightText = useCallback(
       (text) => {
@@ -548,7 +541,6 @@ const JSONCompare = () => {
   const [comparison, setComparison] = useState([]);
   const [showComparison, setShowComparison] = useState(false);
   const [filterType, setFilterType] = useState("all");
-  const [pathSearch, setPathSearch] = useState("");
   const [settings, setSettings] = useState(defaultSettings);
   const [editorSettings, setEditorSettings] = useState(defaultEditorSettings);
   const [showSettings, setShowSettings] = useState(false);
@@ -558,7 +550,6 @@ const JSONCompare = () => {
   const [showSchema, setShowSchema] = useState(false);
   const [showFetch, setShowFetch] = useState(false);
   const [fetchConfig, setFetchConfig] = useState({ target: "left", url: "", method: "GET", headers: "", body: "" });
-  const [history, setHistory] = useState([]);
   const [activeDiffIndex, setActiveDiffIndex] = useState(-1);
   const [selectedDiffPath, setSelectedDiffPath] = useState("");
   const [hoveredPath1, setHoveredPath1] = useState("");
@@ -601,11 +592,9 @@ const JSONCompare = () => {
 
   const filteredComparison = useMemo(() => {
     return comparison.filter((diff) => {
-      const matchesType = filterType === "all" || diff.type === filterType;
-      const matchesSearch = !pathSearch || diff.path.toLowerCase().includes(pathSearch.toLowerCase());
-      return matchesType && matchesSearch;
+      return filterType === "all" || diff.type === filterType;
     });
-  }, [comparison, filterType, pathSearch]);
+  }, [comparison, filterType]);
 
   const searchMatches1 = useMemo(() => (debouncedSearchTerm1 && parsedJson1 ? searchInObject(parsedJson1, debouncedSearchTerm1) : []), [debouncedSearchTerm1, parsedJson1]);
   const searchMatches2 = useMemo(() => (debouncedSearchTerm2 && parsedJson2 ? searchInObject(parsedJson2, debouncedSearchTerm2) : []), [debouncedSearchTerm2, parsedJson2]);
@@ -647,7 +636,6 @@ const JSONCompare = () => {
       setJson1(localStorage.getItem(STORAGE_KEYS.json1) || "");
       setJson2(localStorage.getItem(STORAGE_KEYS.json2) || "");
       setSchemaText(localStorage.getItem(STORAGE_KEYS.schema) || "");
-      setHistory(JSON.parse(localStorage.getItem(STORAGE_KEYS.history) || "[]"));
     } catch {
       // Ignore corrupted local state and let the app continue with defaults.
     }
@@ -689,22 +677,7 @@ const JSONCompare = () => {
     setShowComparison(true);
     setActiveDiffIndex(diffs.length ? 0 : -1);
     setSelectedDiffPath(diffs[0]?.path || "");
-
-    const nextHistory = [
-      {
-        at: new Date().toISOString(),
-        leftName: fileName1 || "First JSON",
-        rightName: fileName2 || "Second JSON",
-        total: diffs.length,
-        added: diffs.filter((diff) => diff.type === "added").length,
-        removed: diffs.filter((diff) => diff.type === "removed").length,
-        modified: diffs.filter((diff) => diff.type === "modified").length,
-      },
-      ...history,
-    ].slice(0, 8);
-    setHistory(nextHistory);
-    localStorage.setItem(STORAGE_KEYS.history, JSON.stringify(nextHistory));
-  }, [fileName1, fileName2, history, json1, json2, schemaText, settings]);
+  }, [json1, json2, schemaText, settings]);
 
   const focusDiff = useCallback((index) => {
     const diff = comparison[index];
@@ -716,7 +689,13 @@ const JSONCompare = () => {
     setTimeout(() => {
       [scrollRef1.current, scrollRef2.current].forEach((root) => {
         const selector = `[data-path="${diff.path.replace(/"/g, '\\"')}"]`;
-        root?.querySelector(selector)?.scrollIntoView({ behavior: "smooth", block: "center" });
+        const target = root?.querySelector(selector);
+        if (!root || !target) return;
+
+        const rootRect = root.getBoundingClientRect();
+        const targetRect = target.getBoundingClientRect();
+        const nextTop = root.scrollTop + targetRect.top - rootRect.top - root.clientHeight / 2 + targetRect.height / 2;
+        root.scrollTo({ top: Math.max(0, nextTop), behavior: "smooth" });
       });
     }, 150);
   }, [comparison]);
@@ -1065,7 +1044,7 @@ const JSONCompare = () => {
 
           {showComparison && (
             <div className="rounded-xl border border-purple-500/30 bg-slate-800/50 backdrop-blur">
-              <div className="border-b border-slate-700/70 p-4">
+              <div className="sticky top-16 z-30 border-b border-slate-700/70 bg-slate-800/95 p-4 backdrop-blur">
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <h3 className="flex items-center gap-2 text-xl font-semibold text-white"><GitCompare className="h-5 w-5 text-purple-400" /> Comparison Results</h3>
@@ -1084,7 +1063,7 @@ const JSONCompare = () => {
                     <button onClick={() => copyToClipboard(safeJsonStringify(patch, 2), "patch")} className="rounded bg-slate-700 px-3 py-2 text-sm text-white">{copied === "patch" ? <Check className="inline h-4 w-4" /> : <Copy className="inline h-4 w-4" />} Patch</button>
                   </div>
                 </div>
-                <div className="grid gap-3 md:grid-cols-[160px_1fr_1fr]">
+                <div className="grid gap-3 md:grid-cols-[160px_1fr]">
                   <div className="relative">
                     <Filter className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-purple-400" />
                     <select value={filterType} onChange={(event) => setFilterType(event.target.value)} className="w-full rounded border border-slate-700 bg-slate-950/60 py-2 pl-10 pr-3 text-sm text-white">
@@ -1094,7 +1073,6 @@ const JSONCompare = () => {
                       <option value="modified">Modified</option>
                     </select>
                   </div>
-                  <input value={pathSearch} onChange={(event) => setPathSearch(event.target.value)} placeholder="Filter by path" className="rounded border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm text-white outline-none focus:border-purple-500" />
                   <div className="flex rounded-lg bg-slate-950/60 p-1 text-sm">
                     {["tree", "list", "detail"].map((tab) => (
                       <button key={tab} onClick={() => setActiveResultTab(tab)} className={`flex-1 rounded px-3 py-1.5 capitalize ${activeResultTab === tab ? "bg-purple-600 text-white" : "text-slate-300 hover:bg-slate-800"}`}>{tab}</button>
@@ -1193,21 +1171,6 @@ const JSONCompare = () => {
             </div>
           )}
         </section>
-
-        {history.length > 0 && (
-          <section className="mt-6 rounded-xl border border-slate-700 bg-slate-800/40 p-4">
-            <h3 className="mb-3 font-semibold text-white">Recent Comparisons</h3>
-            <div className="grid gap-2 md:grid-cols-4">
-              {history.map((entry) => (
-                <div key={entry.at} className="rounded-lg bg-slate-950/50 p-3 text-sm">
-                  <div className="truncate text-white">{entry.leftName} -> {entry.rightName}</div>
-                  <div className="mt-1 text-xs text-slate-400">{new Date(entry.at).toLocaleString()}</div>
-                  <div className="mt-2 text-xs text-slate-300">Total {entry.total}, +{entry.added}, -{entry.removed}, ~{entry.modified}</div>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
       </main>
     </div>
   );
