@@ -1,546 +1,75 @@
-import { Analytics } from "@vercel/analytics/react"
-import React, {useState, useRef, useCallback, useMemo, useEffect, memo} from "react";
-import { FileJson, GitCompare, AlertCircle, CheckCircle, Copy, RotateCcw, Upload, ArrowLeftRight, Search, Filter, Minimize2, Maximize2, Check, ChevronRight, ChevronDown, Pin, X, Eye, Download, Link2, ChevronsUpDown, ChevronsDownUp, Settings2, Home} from "lucide-react";
+import { Analytics } from "@vercel/analytics/react";
 import Editor from "@monaco-editor/react";
-import { useNavigate } from 'react-router-dom';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import {
+  AlertCircle,
+  ArrowLeft,
+  ArrowLeftRight,
+  ArrowRight,
+  Check,
+  CheckCircle,
+  ChevronDown,
+  ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  Clipboard,
+  Copy,
+  Download,
+  FileJson,
+  Filter,
+  GitCompare,
+  Home,
+  Link2,
+  Maximize2,
+  Minimize2,
+  Pin,
+  RotateCcw,
+  Search,
+  Settings2,
+  Upload,
+  Wand2,
+  X,
+} from "lucide-react";
+import {
+  applyDiffToLeft,
+  compareJSONValues,
+  getValueAtPath,
+  parseJSONDetailed,
+  repairJSONish,
+  searchInObject,
+  toJsonPatch,
+  validateAgainstSchema,
+} from "./jsonUtils";
 
-const useDebounce = (value, delay) => {
-  const [debouncedValue, setDebouncedValue] = useState(value);
-
-  useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedValue(value);
-    }, delay);
-
-    return () => {
-      clearTimeout(handler);
-    };
-  }, [value, delay]);
-
-  return debouncedValue;
+const STORAGE_KEYS = {
+  json1: "json-comparator-json1",
+  json2: "json-comparator-json2",
+  settings: "json-comparator-settings",
+  editor: "json-comparator-editor-settings",
+  history: "json-comparator-history",
+  schema: "json-comparator-schema",
 };
 
-const searchInObject = (
-  obj,
-  searchTerm,
-  currentPath = "",
-  parentPaths = []
-) => {
-  const matches = [];
-  const lowerSearchTerm = searchTerm.toLowerCase();
-
-  const search = (value, path, parents) => {
-    if (value === null || value === undefined) return;
-
-    if (typeof value === "object" && !Array.isArray(value)) {
-      Object.entries(value).forEach(([key, val]) => {
-        const newPath = path ? `${path}.${key}` : key;
-        const newParents = [...parents, path].filter(Boolean);
-
-        if (key.toLowerCase().includes(lowerSearchTerm)) {
-          matches.push({ path: newPath, parents: newParents });
-        }
-
-        if (typeof val !== "object" && val !== null) {
-          const valStr = String(val).toLowerCase();
-          if (valStr.includes(lowerSearchTerm)) {
-            matches.push({ path: newPath, parents: newParents });
-          }
-        }
-
-        search(val, newPath, newParents);
-      });
-    } else if (Array.isArray(value)) {
-      value.forEach((item, index) => {
-        const newPath = `${path}[${index}]`;
-        const newParents = [...parents, path].filter(Boolean);
-
-        if (typeof item !== "object" && item !== null) {
-          const itemStr = String(item).toLowerCase();
-          if (itemStr.includes(lowerSearchTerm)) {
-            matches.push({ path: newPath, parents: newParents });
-          }
-        }
-
-        search(item, newPath, newParents);
-      });
-    }
-  };
-
-  search(obj, currentPath, parentPaths);
-  return matches;
+const defaultSettings = {
+  ignoreCase: false,
+  ignoreKeyCase: false,
+  stringNumberEquivalence: false,
+  numberTolerance: 0,
+  arrayMode: "index",
+  arrayMatchKey: "id",
+  ignorePaths: "",
+  includePaths: "",
 };
 
-const TreeNode = memo(
-  ({
-    nodeKey,
-    value,
-    path,
-    differences,
-    isLeft,
-    level = 0,
-    onHover,
-    onPin,
-    pinnedPath,
-    searchMatches = [],
-    searchTerm = "",
-    currentMatchIndex = -1,
-    expandedPaths = new Set(),
-    selectedPath = "",
-    globalExpandToggle = 0,
-    globalExpandAction = "auto",
-  }) => {
-    const matchData = searchMatches.find((m) => m.path === path);
-    const isMatchedPath = !!matchData;
-    const isCurrentMatch = searchMatches[currentMatchIndex]?.path === path;
-    const isSelected = selectedPath === path;
-    const shouldExpand =
-      expandedPaths.has(path) || isMatchedPath || isSelected || level < 2;
-    const [isExpanded, setIsExpanded] = useState(shouldExpand);
-    const nodeRef = useRef(null);
-
-    const isPinned = pinnedPath === path;
-
-    useEffect(() => {
-      if (shouldExpand && globalExpandAction === "auto") {
-        setIsExpanded(true);
-      }
-    }, [shouldExpand, globalExpandAction]);
-
-    useEffect(() => {
-      if (globalExpandToggle > 0) {
-        setIsExpanded(globalExpandAction === "expand");
-      }
-    }, [globalExpandToggle, globalExpandAction]);
-
-    useEffect(() => {
-      if ((isCurrentMatch || isSelected) && nodeRef.current) {
-        setTimeout(() => {
-          nodeRef.current?.scrollIntoView({
-            behavior: "smooth",
-            block: "center",
-            inline: "nearest",
-          });
-        }, 200);
-      }
-    }, [isCurrentMatch, isSelected]);
-
-    const getDiffStatus = useCallback(() => {
-      if (!differences) return null;
-
-      const diff = differences.find((d) => d.path === path);
-      if (!diff) return null;
-
-      if (diff.type === "added" && !isLeft) return "added";
-      if (diff.type === "removed" && isLeft) return "removed";
-      if (diff.type === "modified") return "modified";
-
-      return null;
-    }, [differences, path, isLeft]);
-
-    const diffStatus = getDiffStatus();
-
-    const isObject =
-      value && typeof value === "object" && !Array.isArray(value);
-    const isArray = Array.isArray(value);
-    const isPrimitive = !isObject && !isArray;
-    const hasChildren = isObject || isArray;
-
-    const getBgColor = () => {
-      if (isSelected) return "rgba(168, 85, 247, 0.3)";
-      if (isCurrentMatch && searchTerm) return "rgba(251, 191, 36, 0.4)";
-      if (isMatchedPath && searchTerm) return "rgba(251, 191, 36, 0.2)";
-      if (isPinned) return "rgba(168, 85, 247, 0.15)";
-      if (!diffStatus) return "transparent";
-      if (diffStatus === "added") return "rgba(34, 197, 94, 0.1)";
-      if (diffStatus === "removed") return "rgba(239, 68, 68, 0.1)";
-      if (diffStatus === "modified") return "rgba(234, 179, 8, 0.1)";
-      return "transparent";
-    };
-
-    const getTextColor = useCallback(() => {
-      if (isSelected) return "text-purple-300 font-bold";
-      if (isCurrentMatch && searchTerm) return "text-yellow-300 font-bold";
-      if (isMatchedPath && searchTerm) return "text-yellow-300 font-bold";
-      if (!diffStatus) return "";
-      if (diffStatus === "added") return "text-green-300";
-      if (diffStatus === "removed") return "text-red-300";
-      if (diffStatus === "modified") return "text-yellow-300";
-      return "";
-    }, [isSelected, isCurrentMatch, searchTerm, isMatchedPath, diffStatus]);
-
-    const highlightText = useCallback(
-      (text) => {
-        if (!searchTerm || !text) return text;
-
-        const textStr = String(text);
-        const lowerText = textStr.toLowerCase();
-        const lowerSearch = searchTerm.toLowerCase();
-
-        if (!lowerText.includes(lowerSearch)) return textStr;
-
-        const parts = [];
-        let lastIndex = 0;
-        let index = lowerText.indexOf(lowerSearch);
-
-        while (index !== -1) {
-          if (index > lastIndex) {
-            parts.push(textStr.substring(lastIndex, index));
-          }
-          parts.push(
-            <mark
-              key={index}
-              className="bg-yellow-400 text-black px-0.5 rounded"
-            >
-              {textStr.substring(index, index + lowerSearch.length)}
-            </mark>
-          );
-          lastIndex = index + lowerSearch.length;
-          index = lowerText.indexOf(lowerSearch, lastIndex);
-        }
-
-        if (lastIndex < textStr.length) {
-          parts.push(textStr.substring(lastIndex));
-        }
-
-        return parts;
-      },
-      [searchTerm]
-    );
-
-    const renderValue = useMemo(() => {
-      const textColor = getTextColor();
-
-      if (isPrimitive) {
-        const valueStr = JSON.stringify(value);
-        return (
-          <span className={`text-emerald-400 ${textColor}`}>
-            {highlightText(valueStr)}
-          </span>
-        );
-      }
-
-      if (isArray) {
-        return (
-          <span className="text-purple-400">
-            [{isExpanded ? "" : `...${value.length} items`}]
-          </span>
-        );
-      }
-
-      return (
-        <span className="text-purple-400">
-          {"{"}
-          {isExpanded ? "" : "..."}
-          {"}"}
-        </span>
-      );
-    }, [isPrimitive, isArray, isExpanded, value, highlightText, getTextColor]);
-
-    const handleClick = useCallback(
-      (e) => {
-        e.stopPropagation();
-        if (hasChildren) {
-          setIsExpanded(!isExpanded);
-        }
-      },
-      [hasChildren, isExpanded]
-    );
-
-    const handlePinClick = useCallback(
-      (e) => {
-        e.stopPropagation();
-        onPin(path);
-      },
-      [onPin, path]
-    );
-
-    return (
-      <div className="font-mono text-sm">
-        <div
-          ref={nodeRef}
-          data-path={path}
-          className={`flex items-center gap-1 py-1 px-2 hover:bg-slate-700/30 rounded cursor-pointer group transition-colors ${isPinned ? "ring-1 ring-purple-500/50" : ""
-            } ${isSelected
-              ? "ring-2 ring-purple-500"
-              : isCurrentMatch && searchTerm
-                ? "ring-2 ring-yellow-500"
-                : isMatchedPath && searchTerm
-                  ? "ring-1 ring-yellow-500/50"
-                  : ""
-            }`}
-          style={{
-            paddingLeft: `${level * 20 + 8}px`,
-            backgroundColor: getBgColor(),
-          }}
-          onClick={handleClick}
-          onMouseEnter={() => onHover(path)}
-          onMouseLeave={() => !isPinned && onHover("")}
-        >
-          <span className="w-4 h-4 flex-shrink-0">
-            {hasChildren &&
-              (isExpanded ? (
-                <ChevronDown className="w-4 h-4 text-purple-400" />
-              ) : (
-                <ChevronRight className="w-4 h-4 text-purple-400" />
-              ))}
-          </span>
-
-          <span className={`text-blue-300 ${getTextColor()}`}>
-            {highlightText(String(nodeKey))}:
-          </span>
-
-          <span className="ml-1">{renderValue}</span>
-
-          {isCurrentMatch && searchTerm && (
-            <span className="ml-2 px-1.5 py-0.5 rounded text-xs font-bold bg-yellow-600 text-white animate-pulse">
-              CURRENT
-            </span>
-          )}
-
-          {isMatchedPath && !isCurrentMatch && searchTerm && (
-            <span className="ml-2 px-1.5 py-0.5 rounded text-xs font-bold bg-yellow-600/50 text-yellow-200">
-              MATCH
-            </span>
-          )}
-
-          {diffStatus && (
-            <span
-              className={`ml-2 px-1.5 py-0.5 rounded text-xs font-bold ${diffStatus === "added"
-                  ? "bg-green-600/50 text-green-200"
-                  : diffStatus === "removed"
-                    ? "bg-red-600/50 text-red-200"
-                    : "bg-yellow-600/50 text-yellow-200"
-                }`}
-            >
-              {diffStatus.toUpperCase()}
-            </span>
-          )}
-
-          <button
-            onClick={handlePinClick}
-            className={`ml-auto p-0.5 rounded transition-opacity ${isPinned
-                ? "opacity-100 text-purple-400 hover:text-purple-300"
-                : "opacity-0 group-hover:opacity-100 text-slate-400 hover:text-purple-400"
-              }`}
-            title={isPinned ? "Unpin path" : "Pin path to copy"}
-          >
-            <Pin className="w-3 h-3" />
-          </button>
-        </div>
-
-        {hasChildren && isExpanded && (
-          <div>
-            {isObject &&
-              Object.entries(value).map(([key, val]) => (
-                <TreeNode
-                  key={key}
-                  nodeKey={key}
-                  value={val}
-                  path={path ? `${path}.${key}` : key}
-                  differences={differences}
-                  isLeft={isLeft}
-                  level={level + 1}
-                  onHover={onHover}
-                  onPin={onPin}
-                  pinnedPath={pinnedPath}
-                  searchMatches={searchMatches}
-                  searchTerm={searchTerm}
-                  currentMatchIndex={currentMatchIndex}
-                  expandedPaths={expandedPaths}
-                  selectedPath={selectedPath}
-                  globalExpandToggle={globalExpandToggle}
-                  globalExpandAction={globalExpandAction}
-                />
-              ))}
-            {isArray &&
-              value.map((val, index) => (
-                <TreeNode
-                  key={index}
-                  nodeKey={index}
-                  value={val}
-                  path={`${path}[${index}]`}
-                  differences={differences}
-                  isLeft={isLeft}
-                  level={level + 1}
-                  onHover={onHover}
-                  onPin={onPin}
-                  pinnedPath={pinnedPath}
-                  searchMatches={searchMatches}
-                  searchTerm={searchTerm}
-                  currentMatchIndex={currentMatchIndex}
-                  expandedPaths={expandedPaths}
-                  selectedPath={selectedPath}
-                  globalExpandToggle={globalExpandToggle}
-                  globalExpandAction={globalExpandAction}
-                />
-              ))}
-          </div>
-        )}
-      </div>
-    );
-  },
-  (prevProps, nextProps) => {
-    return (
-      prevProps.value === nextProps.value &&
-      prevProps.path === nextProps.path &&
-      prevProps.pinnedPath === nextProps.pinnedPath &&
-      prevProps.searchTerm === nextProps.searchTerm &&
-      prevProps.currentMatchIndex === nextProps.currentMatchIndex &&
-      prevProps.selectedPath === nextProps.selectedPath &&
-      prevProps.expandedPaths === nextProps.expandedPaths
-    );
-  }
-);
-
-TreeNode.displayName = "TreeNode";
-
-const PathHeader = memo(({ path, side, onClearPath, onExpandAll, onCollapseAll }) => {
-  const [copied, setCopied] = useState(false);
-
-  const copyPath = useCallback(() => {
-    if (path) {
-      navigator.clipboard.writeText(path).then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      });
-    }
-  }, [path]);
-
-  return (
-    <div
-      className={`flex items-center gap-2 mb-3 pb-2 border-b ${side === "left" ? "border-purple-500/30" : "border-blue-500/30"
-        }`}
-    >
-      <span
-        className={`w-8 h-8 ${side === "left" ? "bg-purple-600" : "bg-blue-600"
-          } rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0`}
-      >
-        {side === "left" ? "1" : "2"}
-      </span>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <h4 className="text-lg font-semibold text-white">
-            {side === "left" ? "First JSON" : "Second JSON"}
-          </h4>
-          <div className="flex gap-1 ml-2">
-            <button onClick={onExpandAll} className="p-1 rounded bg-slate-700/50 hover:bg-slate-600/50 text-slate-300 hover:text-white transition-colors" title="Expand All"><ChevronsDownUp className="w-3 h-3" /></button>
-            <button onClick={onCollapseAll} className="p-1 rounded bg-slate-700/50 hover:bg-slate-600/50 text-slate-300 hover:text-white transition-colors" title="Collapse All"><ChevronsUpDown className="w-3 h-3" /></button>
-          </div>
-        </div>
-        {path ? (
-          <div className="flex items-center gap-2 mt-1 bg-slate-900/50 rounded px-2 py-1">
-            <Pin className="w-3 h-3 text-purple-400 flex-shrink-0" />
-            <code className="text-xs text-purple-300 font-mono truncate block">
-              {path}
-            </code>
-            <div className="flex gap-1 flex-shrink-0">
-              <button
-                onClick={copyPath}
-                className={`p-1 rounded transition-colors ${copied
-                    ? "bg-green-600/50 text-green-300"
-                    : "bg-slate-700/50 hover:bg-slate-600/50 text-slate-300 hover:text-white"
-                  }`}
-                title="Copy path to clipboard"
-              >
-                {copied ? (
-                  <Check className="w-3 h-3" />
-                ) : (
-                  <Copy className="w-3 h-3" />
-                )}
-              </button>
-              <button
-                onClick={onClearPath}
-                className="p-1 rounded bg-slate-700/50 hover:bg-slate-600/50 text-slate-300 hover:text-white transition-colors"
-                title="Clear path"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            </div>
-          </div>
-        ) : (
-          <p className="text-xs text-slate-400 mt-2 mb-2 italic">
-            Click the pin icon on any node to show its path
-          </p>
-        )}
-      </div>
-    </div>
-  );
-});
-
-PathHeader.displayName = "PathHeader";
-
-const JSONTree = memo(
-  ({
-    data,
-    differences,
-    isLeft,
-    onPathHover,
-    currentPath,
-    onPathPin,
-    pinnedPath,
-    onClearPath,
-    searchMatches,
-    searchTerm,
-    currentMatchIndex,
-    expandedPaths,
-    scrollRef,
-    selectedPath,
-    globalExpandToggle,
-    globalExpandAction,
-    onExpandAll,
-    onCollapseAll
-  }) => {
-    if (!data) {
-      return (
-        <div className="text-slate-500 italic p-4 text-center">
-          No JSON data
-        </div>
-      );
-    }
-
-    return (
-      <div className="h-full">
-        <PathHeader
-          path={pinnedPath || currentPath}
-          side={isLeft ? "left" : "right"}
-          onClearPath={onClearPath}
-          onExpandAll={onExpandAll}
-          onCollapseAll={onCollapseAll}
-        />
-        <div
-          ref={scrollRef}
-          className="max-h-[600px] overflow-auto bg-slate-900/70 rounded-lg p-2"
-        >
-          <div className="py-2">
-            {typeof data === "object" &&
-              Object.entries(data).map(([key, value]) => (
-                <TreeNode
-                  key={key}
-                  nodeKey={key}
-                  value={value}
-                  path={key}
-                  differences={differences}
-                  isLeft={isLeft}
-                  level={0}
-                  onHover={onPathHover}
-                  onPin={onPathPin}
-                  pinnedPath={pinnedPath}
-                  searchMatches={searchMatches}
-                  searchTerm={searchTerm}
-                  currentMatchIndex={currentMatchIndex}
-                  expandedPaths={expandedPaths}
-                  selectedPath={selectedPath}
-                />
-              ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
-);
-
-JSONTree.displayName = "JSONTree";
+const defaultEditorSettings = {
+  fontSize: 13,
+  tabSize: 2,
+  wordWrap: "on",
+  minimap: false,
+  autoFormatOnPaste: true,
+  theme: "vs-dark",
+};
 
 const sampleJSON1 = {
   name: "John Doe",
@@ -552,6 +81,10 @@ const sampleJSON1 = {
     zipCode: "10001",
   },
   hobbies: ["reading", "gaming"],
+  metadata: {
+    requestId: "abc-1",
+    updatedAt: "2026-01-01T10:00:00Z",
+  },
 };
 
 const sampleJSON2 = {
@@ -564,27 +97,470 @@ const sampleJSON2 = {
     zipCode: "90001",
   },
   hobbies: ["reading", "coding", "gaming"],
+  metadata: {
+    requestId: "abc-2",
+    updatedAt: "2026-01-01T10:00:01Z",
+  },
+};
+
+const useDebounce = (value, delay) => {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+  useEffect(() => {
+    const handler = setTimeout(() => setDebouncedValue(value), delay);
+    return () => clearTimeout(handler);
+  }, [value, delay]);
+  return debouncedValue;
+};
+
+const safeJsonStringify = (value, spacing = 2) => {
+  try {
+    return JSON.stringify(value, null, spacing);
+  } catch {
+    return String(value);
+  }
+};
+
+const downloadText = (name, text, type = "application/json") => {
+  const blob = new Blob([text], { type });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = name;
+  anchor.click();
+  URL.revokeObjectURL(url);
+};
+
+const ErrorMessage = ({ error }) => {
+  if (!error) return null;
+  return (
+    <div className="mt-2 flex items-start gap-2 text-red-400 text-sm">
+      <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+      <span>
+        {error.message}
+        {error.line ? ` at line ${error.line}, column ${error.column}` : ""}
+      </span>
+    </div>
+  );
+};
+
+const FieldLabel = ({ children }) => (
+  <label className="block text-xs uppercase tracking-wide text-slate-400 mb-1">{children}</label>
+);
+
+const TreeNode = memo(
+  ({
+    nodeKey,
+    value,
+    path,
+    diffMap,
+    isLeft,
+    level = 0,
+    pinnedPath,
+    selectedPath,
+    searchMatches,
+    searchTerm,
+    currentMatchIndex,
+    expandedPaths,
+    globalExpandToggle,
+    globalExpandAction,
+    onHover,
+    onPin,
+  }) => {
+    const nodeRef = useRef(null);
+    const [isExpanded, setIsExpanded] = useState(level < 2);
+    const isObject = value && typeof value === "object" && !Array.isArray(value);
+    const isArray = Array.isArray(value);
+    const hasChildren = isObject || isArray;
+    const diff = diffMap.get(path);
+    const diffStatus =
+      diff?.type === "added" && !isLeft
+        ? "added"
+        : diff?.type === "removed" && isLeft
+          ? "removed"
+          : diff?.type === "modified"
+            ? "modified"
+            : null;
+    const isPinned = pinnedPath === path;
+    const isSelected = selectedPath === path;
+    const isCurrentMatch = searchMatches[currentMatchIndex]?.path === path;
+    const isMatch = searchMatches.some((match) => match.path === path);
+
+    useEffect(() => {
+      if (expandedPaths.has(path)) setIsExpanded(true);
+    }, [expandedPaths, path]);
+
+    useEffect(() => {
+      if (globalExpandToggle > 0) setIsExpanded(globalExpandAction === "expand");
+    }, [globalExpandAction, globalExpandToggle]);
+
+    useEffect(() => {
+      if ((isSelected || isCurrentMatch) && nodeRef.current) {
+        setTimeout(() => nodeRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 150);
+      }
+    }, [isSelected, isCurrentMatch]);
+
+    const highlightText = useCallback(
+      (text) => {
+        if (!searchTerm) return text;
+        const source = String(text);
+        const lower = source.toLowerCase();
+        const target = searchTerm.toLowerCase();
+        if (!lower.includes(target)) return source;
+        const parts = [];
+        let start = 0;
+        let index = lower.indexOf(target);
+        while (index !== -1) {
+          if (index > start) parts.push(source.slice(start, index));
+          parts.push(
+            <mark key={`${source}-${index}`} className="bg-yellow-400 text-black rounded px-0.5">
+              {source.slice(index, index + target.length)}
+            </mark>
+          );
+          start = index + target.length;
+          index = lower.indexOf(target, start);
+        }
+        if (start < source.length) parts.push(source.slice(start));
+        return parts;
+      },
+      [searchTerm]
+    );
+
+    const valuePreview = useMemo(() => {
+      if (isArray) return <span className="text-purple-400">[{isExpanded ? "" : `...${value.length} items`}]</span>;
+      if (isObject) return <span className="text-purple-400">{"{"}{isExpanded ? "" : "..."}{"}"}</span>;
+      return <span className="text-emerald-400">{highlightText(safeJsonStringify(value, 0))}</span>;
+    }, [highlightText, isArray, isExpanded, isObject, value]);
+
+    const rowTone = diffStatus === "added"
+      ? "bg-green-500/10 text-green-200"
+      : diffStatus === "removed"
+        ? "bg-red-500/10 text-red-200"
+        : diffStatus === "modified"
+          ? "bg-yellow-500/10 text-yellow-200"
+          : "";
+
+    return (
+      <div className="font-mono text-sm">
+        <div
+          ref={nodeRef}
+          data-path={path}
+          onMouseEnter={() => onHover(path)}
+          onMouseLeave={() => !isPinned && onHover("")}
+          onClick={() => hasChildren && setIsExpanded((current) => !current)}
+          className={`group flex min-h-8 items-center gap-1 rounded px-2 py-1 transition-colors hover:bg-slate-700/40 ${rowTone} ${
+            isSelected ? "ring-2 ring-purple-500" : isCurrentMatch ? "ring-2 ring-yellow-400" : isPinned ? "ring-1 ring-purple-500/70" : isMatch ? "ring-1 ring-yellow-500/40" : ""
+          }`}
+          style={{ paddingLeft: `${level * 18 + 8}px` }}
+        >
+          <span className="w-4 flex-shrink-0 text-purple-400">
+            {hasChildren ? isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" /> : null}
+          </span>
+          <span className="text-blue-300">{highlightText(String(nodeKey))}:</span>
+          <span className="ml-1 min-w-0 break-all">{valuePreview}</span>
+          {diffStatus && (
+            <span className="ml-2 rounded bg-slate-950/40 px-1.5 py-0.5 text-xs font-bold uppercase">{diffStatus}</span>
+          )}
+          {isCurrentMatch && <span className="ml-2 rounded bg-yellow-500/70 px-1.5 py-0.5 text-xs font-bold text-black">current</span>}
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onPin(path);
+            }}
+            title={isPinned ? "Unpin path" : "Pin path"}
+            className={`ml-auto rounded p-1 text-slate-400 hover:bg-slate-700 hover:text-purple-300 ${isPinned ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
+          >
+            <Pin className="w-3 h-3" />
+          </button>
+        </div>
+        {hasChildren && isExpanded && (
+          <div>
+            {Object.entries(value).map(([key, child]) => (
+              <TreeNode
+                key={`${path}.${key}`}
+                nodeKey={key}
+                value={child}
+                path={Array.isArray(value) ? `${path}[${key}]` : path ? `${path}.${key}` : key}
+                diffMap={diffMap}
+                isLeft={isLeft}
+                level={level + 1}
+                pinnedPath={pinnedPath}
+                selectedPath={selectedPath}
+                searchMatches={searchMatches}
+                searchTerm={searchTerm}
+                currentMatchIndex={currentMatchIndex}
+                expandedPaths={expandedPaths}
+                globalExpandToggle={globalExpandToggle}
+                globalExpandAction={globalExpandAction}
+                onHover={onHover}
+                onPin={onPin}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+);
+
+TreeNode.displayName = "TreeNode";
+
+const JSONTree = memo(
+  ({
+    title,
+    data,
+    diffMap,
+    isLeft,
+    pinnedPath,
+    hoveredPath,
+    selectedPath,
+    searchTerm,
+    currentMatchIndex,
+    searchMatches,
+    expandedPaths,
+    globalExpandToggle,
+    globalExpandAction,
+    onHover,
+    onPin,
+    onClearPin,
+    onExpandAll,
+    onCollapseAll,
+    scrollRef,
+    onSearchChange,
+    onSearchKeyDown,
+  }) => {
+    if (data === null || data === undefined) {
+      return <div className="rounded-lg bg-slate-900/70 p-6 text-center text-slate-500">No parsed JSON yet</div>;
+    }
+
+    const shownPath = pinnedPath || hoveredPath;
+    const roots = Array.isArray(data)
+      ? data.map((value, index) => [index, value, `[${index}]`])
+      : data && typeof data === "object"
+        ? Object.entries(data).map(([key, value]) => [key, value, key])
+        : [["root", data, "root"]];
+
+    return (
+      <div className="h-full">
+        <div className="mb-3 flex items-start justify-between gap-3 border-b border-slate-700/70 pb-3">
+          <div className="min-w-0">
+            <h4 className="text-lg font-semibold text-white">{title}</h4>
+            {shownPath ? (
+              <div className="mt-1 flex items-center gap-2 rounded bg-slate-950/60 px-2 py-1">
+                <Pin className="w-3 h-3 flex-shrink-0 text-purple-400" />
+                <code className="truncate text-xs text-purple-300">{shownPath}</code>
+                <button title="Copy path" onClick={() => navigator.clipboard.writeText(shownPath)} className="rounded p-1 text-slate-300 hover:bg-slate-700">
+                  <Copy className="w-3 h-3" />
+                </button>
+                <button title="Clear path" onClick={onClearPin} className="rounded p-1 text-slate-300 hover:bg-slate-700">
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            ) : (
+              <p className="mt-1 text-xs text-slate-500">Hover or pin a node to inspect its path.</p>
+            )}
+          </div>
+          <div className="flex flex-shrink-0 gap-1">
+            <button title="Expand all" onClick={onExpandAll} className="rounded bg-slate-700/60 p-1.5 text-slate-200 hover:bg-slate-600">
+              <ChevronsDownUp className="w-4 h-4" />
+            </button>
+            <button title="Collapse all" onClick={onCollapseAll} className="rounded bg-slate-700/60 p-1.5 text-slate-200 hover:bg-slate-600">
+              <ChevronsUpDown className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+        <div className="mb-3">
+          <div className="relative">
+            <Search className={`absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 ${isLeft ? "text-purple-400" : "text-blue-400"}`} />
+            <input
+              value={searchTerm}
+              onChange={(event) => onSearchChange(event.target.value)}
+              onKeyDown={onSearchKeyDown}
+              placeholder="Search keys or values"
+              className="w-full rounded-lg border border-slate-700 bg-slate-950/60 py-2 pl-10 pr-3 text-sm text-white outline-none focus:border-purple-500"
+            />
+          </div>
+          {searchTerm && (
+            <div className="mt-1 text-xs text-yellow-300">
+              {searchMatches.length} match(es){searchMatches.length ? `, ${currentMatchIndex >= 0 ? currentMatchIndex + 1 : 0}/${searchMatches.length}` : ""}
+            </div>
+          )}
+        </div>
+        <div ref={scrollRef} className="max-h-[620px] overflow-auto rounded-lg bg-slate-950/70 p-2">
+          {roots.map(([key, value, rootPath]) => (
+            <TreeNode
+              key={key}
+              nodeKey={key}
+              value={value}
+              path={rootPath}
+              diffMap={diffMap}
+              isLeft={isLeft}
+              pinnedPath={pinnedPath}
+              selectedPath={selectedPath}
+              searchMatches={searchMatches}
+              searchTerm={searchTerm}
+              currentMatchIndex={currentMatchIndex}
+              expandedPaths={expandedPaths}
+              globalExpandToggle={globalExpandToggle}
+              globalExpandAction={globalExpandAction}
+              onHover={onHover}
+              onPin={onPin}
+            />
+          ))}
+        </div>
+      </div>
+    );
+  }
+);
+
+JSONTree.displayName = "JSONTree";
+
+const EditorPanel = ({
+  side,
+  title,
+  value,
+  setValue,
+  error,
+  setError,
+  fileName,
+  setFileName,
+  dragOver,
+  setDragOver,
+  editorSettings,
+  onEditorMount,
+  onFormat,
+  onMinify,
+  onRepair,
+  onPaste,
+  onCopy,
+  onUpload,
+  inputRef,
+  isMinified,
+}) => {
+  const tone = side === "left" ? "purple" : "blue";
+  return (
+    <div className={`rounded-xl border border-${tone}-500/30 bg-slate-800/50 p-4 backdrop-blur`}>
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <h3 className="flex items-center gap-2 text-xl font-semibold text-white">
+            <span className={`flex h-8 w-8 items-center justify-center rounded-full bg-${tone}-600 text-sm`}>{side === "left" ? "1" : "2"}</span>
+            {title}
+          </h3>
+          {fileName && (
+            <div className={`mt-2 flex items-center gap-2 text-sm text-${tone}-300`}>
+              <FileJson className="w-4 h-4" />
+              <span className="truncate">{fileName}</span>
+            </div>
+          )}
+        </div>
+        <div className="flex flex-wrap justify-end gap-2">
+          <button onClick={onPaste} className="rounded bg-slate-700/70 px-3 py-1 text-sm text-white hover:bg-slate-600">
+            <Clipboard className="inline h-3 w-3" /> Paste
+          </button>
+          <button onClick={() => inputRef.current?.click()} className={`rounded bg-${tone}-600/60 px-3 py-1 text-sm text-white hover:bg-${tone}-600`}>
+            <Upload className="inline h-3 w-3" /> Upload
+          </button>
+          <button onClick={onFormat} className={`rounded bg-${tone}-600/60 px-3 py-1 text-sm text-white hover:bg-${tone}-600`}>Format</button>
+          <button onClick={onMinify} title={isMinified ? "Expand" : "Minify"} className={`rounded bg-${tone}-600/60 px-3 py-1 text-sm text-white hover:bg-${tone}-600`}>
+            {isMinified ? <Maximize2 className="inline h-3 w-3" /> : <Minimize2 className="inline h-3 w-3" />}
+          </button>
+          <button onClick={onRepair} title="Repair common JSON-ish input" className={`rounded bg-${tone}-600/60 px-3 py-1 text-sm text-white hover:bg-${tone}-600`}>
+            <Wand2 className="inline h-3 w-3" />
+          </button>
+          <button onClick={onCopy} className={`rounded bg-${tone}-600/60 px-3 py-1 text-sm text-white hover:bg-${tone}-600`}>
+            <Copy className="inline h-3 w-3" />
+          </button>
+        </div>
+      </div>
+      <input ref={inputRef} type="file" accept=".json,.jsonc,.txt" className="hidden" onChange={onUpload} />
+      <div
+        onDragOver={(event) => {
+          event.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(event) => {
+          event.preventDefault();
+          setDragOver(false);
+          const file = event.dataTransfer.files[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = (readerEvent) => {
+            const content = readerEvent.target.result;
+            setValue(content);
+            setFileName(file.name);
+            setError(parseJSONDetailed(content).error);
+          };
+          reader.readAsText(file);
+        }}
+        className={`relative ${dragOver ? `ring-2 ring-${tone}-500` : ""}`}
+      >
+        <div className="h-80 overflow-hidden rounded-lg border border-slate-700 bg-[#1e1e1e]">
+          <Editor
+            height="100%"
+            defaultLanguage="json"
+            theme={editorSettings.theme}
+            value={value}
+            onMount={onEditorMount}
+            onChange={(nextValue) => {
+              const text = nextValue || "";
+              setValue(text);
+              setError(parseJSONDetailed(text).error);
+            }}
+            options={{
+              minimap: { enabled: editorSettings.minimap },
+              fontSize: editorSettings.fontSize,
+              tabSize: editorSettings.tabSize,
+              wordWrap: editorSettings.wordWrap,
+              formatOnPaste: editorSettings.autoFormatOnPaste,
+              scrollBeyondLastLine: false,
+              automaticLayout: true,
+            }}
+          />
+        </div>
+        {dragOver && (
+          <div className={`pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-${tone}-600/20`}>
+            <div className="rounded-xl bg-slate-950/90 p-5 text-white">Drop JSON file here</div>
+          </div>
+        )}
+      </div>
+      <ErrorMessage error={error} />
+      {!error && value && (
+        <div className="mt-2 flex items-center gap-2 text-sm text-green-400">
+          <CheckCircle className="w-4 h-4" />
+          Valid JSON
+        </div>
+      )}
+    </div>
+  );
 };
 
 const JSONCompare = () => {
   const navigate = useNavigate();
   const [json1, setJson1] = useState("");
   const [json2, setJson2] = useState("");
-  const [error1, setError1] = useState("");
-  const [error2, setError2] = useState("");
-  const [comparison, setComparison] = useState(null);
-  const [showComparison, setShowComparison] = useState(false);
+  const [error1, setError1] = useState(null);
+  const [error2, setError2] = useState(null);
   const [fileName1, setFileName1] = useState("");
   const [fileName2, setFileName2] = useState("");
-  const [dragOver1, setDragOver1] = useState(false);
-  const [dragOver2, setDragOver2] = useState(false);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [filterType, setFilterType] = useState("all");
-  const [isMinified1, setIsMinified1] = useState(false);
-  const [isMinified2, setIsMinified2] = useState(false);
-  const [copied, setCopied] = useState("");
   const [parsedJson1, setParsedJson1] = useState(null);
   const [parsedJson2, setParsedJson2] = useState(null);
+  const [comparison, setComparison] = useState([]);
+  const [showComparison, setShowComparison] = useState(false);
+  const [filterType, setFilterType] = useState("all");
+  const [pathSearch, setPathSearch] = useState("");
+  const [settings, setSettings] = useState(defaultSettings);
+  const [editorSettings, setEditorSettings] = useState(defaultEditorSettings);
+  const [showSettings, setShowSettings] = useState(false);
+  const [schemaText, setSchemaText] = useState("");
+  const [schemaErrors1, setSchemaErrors1] = useState([]);
+  const [schemaErrors2, setSchemaErrors2] = useState([]);
+  const [showSchema, setShowSchema] = useState(false);
+  const [showFetch, setShowFetch] = useState(false);
+  const [fetchConfig, setFetchConfig] = useState({ target: "left", url: "", method: "GET", headers: "", body: "" });
+  const [history, setHistory] = useState([]);
+  const [activeDiffIndex, setActiveDiffIndex] = useState(-1);
+  const [selectedDiffPath, setSelectedDiffPath] = useState("");
   const [hoveredPath1, setHoveredPath1] = useState("");
   const [hoveredPath2, setHoveredPath2] = useState("");
   const [pinnedPath1, setPinnedPath1] = useState("");
@@ -593,57 +569,46 @@ const JSONCompare = () => {
   const [searchTerm2, setSearchTerm2] = useState("");
   const [currentMatchIndex1, setCurrentMatchIndex1] = useState(-1);
   const [currentMatchIndex2, setCurrentMatchIndex2] = useState(-1);
-  const [selectedDiffPath, setSelectedDiffPath] = useState("");
-  
-  const [showSettings, setShowSettings] = useState(false);
-  const [settings, setSettings] = useState({
-    ignoreCase: false,
-    numberTolerance: 0,
-  });
+  const [dragOver1, setDragOver1] = useState(false);
+  const [dragOver2, setDragOver2] = useState(false);
+  const [isMinified1, setIsMinified1] = useState(false);
+  const [isMinified2, setIsMinified2] = useState(false);
+  const [copied, setCopied] = useState("");
   const [globalExpandToggle, setGlobalExpandToggle] = useState(0);
-  const [globalExpandAction, setGlobalExpandAction] = useState("auto"); // "expand", "collapse", "auto"
-  const [fetchUrl1, setFetchUrl1] = useState("");
-  const [fetchUrl2, setFetchUrl2] = useState("");
-  const [showFetch1, setShowFetch1] = useState(false);
-  const [showFetch2, setShowFetch2] = useState(false);
+  const [globalExpandAction, setGlobalExpandAction] = useState("auto");
+  const [activeResultTab, setActiveResultTab] = useState("tree");
 
-  // Restore settings and state from localstorage on mount
-  useEffect(() => {
-    try {
-      const savedSettings = localStorage.getItem("json-comparator-settings");
-      if (savedSettings) setSettings(JSON.parse(savedSettings));
-      
-      const saved1 = localStorage.getItem("json-comparator-json1");
-      const saved2 = localStorage.getItem("json-comparator-json2");
-      if (saved1) { setJson1(saved1); setFileName1("Recovered JSON 1"); }
-      if (saved2) { setJson2(saved2); setFileName2("Recovered JSON 2"); }
-    } catch(e) {}
-  }, []);
-
-  // Save changes to local storage
-  useEffect(() => {
-    if (json1) localStorage.setItem("json-comparator-json1", json1);
-    if (json2) localStorage.setItem("json-comparator-json2", json2);
-    localStorage.setItem("json-comparator-settings", JSON.stringify(settings));
-  }, [json1, json2, settings]);
-
-  const scrollRef1 = useRef(null);
-  const scrollRef2 = useRef(null);
+  const editor1Ref = useRef(null);
+  const editor2Ref = useRef(null);
   const fileInput1Ref = useRef(null);
   const fileInput2Ref = useRef(null);
+  const scrollRef1 = useRef(null);
+  const scrollRef2 = useRef(null);
 
-  const debouncedSearchTerm1 = useDebounce(searchTerm1, 500);
-  const debouncedSearchTerm2 = useDebounce(searchTerm2, 500);
+  const debouncedSearchTerm1 = useDebounce(searchTerm1, 300);
+  const debouncedSearchTerm2 = useDebounce(searchTerm2, 300);
+  const diffMap = useMemo(() => new Map(comparison.map((diff) => [diff.path, diff])), [comparison]);
+  const patch = useMemo(() => toJsonPatch(comparison), [comparison]);
+  const stats = useMemo(
+    () => ({
+      total: comparison.length,
+      added: comparison.filter((diff) => diff.type === "added").length,
+      removed: comparison.filter((diff) => diff.type === "removed").length,
+      modified: comparison.filter((diff) => diff.type === "modified").length,
+    }),
+    [comparison]
+  );
 
-  const searchMatches1 = useMemo(() => {
-    if (!debouncedSearchTerm1 || !parsedJson1) return [];
-    return searchInObject(parsedJson1, debouncedSearchTerm1);
-  }, [debouncedSearchTerm1, parsedJson1]);
+  const filteredComparison = useMemo(() => {
+    return comparison.filter((diff) => {
+      const matchesType = filterType === "all" || diff.type === filterType;
+      const matchesSearch = !pathSearch || diff.path.toLowerCase().includes(pathSearch.toLowerCase());
+      return matchesType && matchesSearch;
+    });
+  }, [comparison, filterType, pathSearch]);
 
-  const searchMatches2 = useMemo(() => {
-    if (!debouncedSearchTerm2 || !parsedJson2) return [];
-    return searchInObject(parsedJson2, debouncedSearchTerm2);
-  }, [debouncedSearchTerm2, parsedJson2]);
+  const searchMatches1 = useMemo(() => (debouncedSearchTerm1 && parsedJson1 ? searchInObject(parsedJson1, debouncedSearchTerm1) : []), [debouncedSearchTerm1, parsedJson1]);
+  const searchMatches2 = useMemo(() => (debouncedSearchTerm2 && parsedJson2 ? searchInObject(parsedJson2, debouncedSearchTerm2) : []), [debouncedSearchTerm2, parsedJson2]);
 
   const expandedPaths1 = useMemo(() => {
     const paths = new Set();
@@ -651,26 +616,12 @@ const JSONCompare = () => {
       match.parents.forEach((parent) => paths.add(parent));
       paths.add(match.path);
     });
-    if (selectedDiffPath) {
-      let currentPath = "";
-      const pathParts = selectedDiffPath.split(/\.|\[/).filter(Boolean);
-
-      pathParts.forEach((part, index) => {
-        const cleanPart = part.replace("]", "");
-
-        if (index === 0) {
-          currentPath = cleanPart;
-        } else {
-          if (selectedDiffPath.includes(`[${cleanPart}]`)) {
-            currentPath += `[${cleanPart}]`;
-          } else {
-            currentPath += `.${cleanPart}`;
-          }
-        }
-        paths.add(currentPath);
-      });
-      paths.add(selectedDiffPath);
-    }
+    if (selectedDiffPath) selectedDiffPath.match(/[^.[\]]+|\[[^\]]+\]/g)?.reduce((current, token) => {
+      const clean = token.replace(/^\[|\]$/g, "");
+      const next = current ? (/^\d+$/.test(clean) ? `${current}[${clean}]` : `${current}.${clean}`) : clean;
+      paths.add(next);
+      return next;
+    }, "");
     return paths;
   }, [searchMatches1, selectedDiffPath]);
 
@@ -680,1187 +631,585 @@ const JSONCompare = () => {
       match.parents.forEach((parent) => paths.add(parent));
       paths.add(match.path);
     });
-    if (selectedDiffPath) {
-      let currentPath = "";
-      const pathParts = selectedDiffPath.split(/\.|\[/).filter(Boolean);
-
-      pathParts.forEach((part, index) => {
-        const cleanPart = part.replace("]", "");
-
-        if (index === 0) {
-          currentPath = cleanPart;
-        } else {
-          if (selectedDiffPath.includes(`[${cleanPart}]`)) {
-            currentPath += `[${cleanPart}]`;
-          } else {
-            currentPath += `.${cleanPart}`;
-          }
-        }
-        paths.add(currentPath);
-      });
-      paths.add(selectedDiffPath);
-    }
+    if (selectedDiffPath) selectedDiffPath.match(/[^.[\]]+|\[[^\]]+\]/g)?.reduce((current, token) => {
+      const clean = token.replace(/^\[|\]$/g, "");
+      const next = current ? (/^\d+$/.test(clean) ? `${current}[${clean}]` : `${current}.${clean}`) : clean;
+      paths.add(next);
+      return next;
+    }, "");
     return paths;
   }, [searchMatches2, selectedDiffPath]);
 
-  const validateJSON = useCallback((text, setError) => {
-    if (!text.trim()) {
-      setError("");
-      return null;
-    }
+  useEffect(() => {
     try {
-      const parsed = JSON.parse(text);
-      setError("");
-      return parsed;
-    } catch (e) {
-      setError(e.message);
-      return null;
+      setSettings({ ...defaultSettings, ...JSON.parse(localStorage.getItem(STORAGE_KEYS.settings) || "{}") });
+      setEditorSettings({ ...defaultEditorSettings, ...JSON.parse(localStorage.getItem(STORAGE_KEYS.editor) || "{}") });
+      setJson1(localStorage.getItem(STORAGE_KEYS.json1) || "");
+      setJson2(localStorage.getItem(STORAGE_KEYS.json2) || "");
+      setSchemaText(localStorage.getItem(STORAGE_KEYS.schema) || "");
+      setHistory(JSON.parse(localStorage.getItem(STORAGE_KEYS.history) || "[]"));
+    } catch {
+      // Ignore corrupted local state and let the app continue with defaults.
     }
   }, []);
 
-  const compareJSON = useCallback((obj1, obj2, path = "", currentSettings = settings) => {
-    const differences = [];
+  useEffect(() => {
+    if (json1) localStorage.setItem(STORAGE_KEYS.json1, json1);
+    else localStorage.removeItem(STORAGE_KEYS.json1);
+    if (json2) localStorage.setItem(STORAGE_KEYS.json2, json2);
+    else localStorage.removeItem(STORAGE_KEYS.json2);
+    localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(settings));
+    localStorage.setItem(STORAGE_KEYS.editor, JSON.stringify(editorSettings));
+    localStorage.setItem(STORAGE_KEYS.schema, schemaText);
+  }, [editorSettings, json1, json2, schemaText, settings]);
 
-    const isValEqual = (v1, v2) => {
-      if (typeof v1 === "number" && typeof v2 === "number") {
-        return Math.abs(v1 - v2) <= (parseFloat(currentSettings.numberTolerance) || 0);
+  const compare = useCallback(() => {
+    const left = parseJSONDetailed(json1);
+    const right = parseJSONDetailed(json2);
+    setError1(left.error);
+    setError2(right.error);
+    if (left.error || right.error || left.value === null || right.value === null) return;
+
+    const diffs = compareJSONValues(left.value, right.value, settings);
+    let schema1 = [];
+    let schema2 = [];
+    if (schemaText.trim()) {
+      const schemaResult = parseJSONDetailed(schemaText);
+      if (!schemaResult.error) {
+        schema1 = validateAgainstSchema(left.value, schemaResult.value);
+        schema2 = validateAgainstSchema(right.value, schemaResult.value);
       }
-      if (currentSettings.ignoreCase && typeof v1 === "string" && typeof v2 === "string") {
-        return v1.toLowerCase() === v2.toLowerCase();
+    }
+
+    setParsedJson1(left.value);
+    setParsedJson2(right.value);
+    setComparison(diffs);
+    setSchemaErrors1(schema1);
+    setSchemaErrors2(schema2);
+    setShowComparison(true);
+    setActiveDiffIndex(diffs.length ? 0 : -1);
+    setSelectedDiffPath(diffs[0]?.path || "");
+
+    const nextHistory = [
+      {
+        at: new Date().toISOString(),
+        leftName: fileName1 || "First JSON",
+        rightName: fileName2 || "Second JSON",
+        total: diffs.length,
+        added: diffs.filter((diff) => diff.type === "added").length,
+        removed: diffs.filter((diff) => diff.type === "removed").length,
+        modified: diffs.filter((diff) => diff.type === "modified").length,
+      },
+      ...history,
+    ].slice(0, 8);
+    setHistory(nextHistory);
+    localStorage.setItem(STORAGE_KEYS.history, JSON.stringify(nextHistory));
+  }, [fileName1, fileName2, history, json1, json2, schemaText, settings]);
+
+  const focusDiff = useCallback((index) => {
+    const diff = comparison[index];
+    if (!diff) return;
+    setActiveDiffIndex(index);
+    setSelectedDiffPath(diff.path);
+    setPinnedPath1(diff.path);
+    setPinnedPath2(diff.path);
+    setTimeout(() => {
+      [scrollRef1.current, scrollRef2.current].forEach((root) => {
+        const selector = `[data-path="${diff.path.replace(/"/g, '\\"')}"]`;
+        root?.querySelector(selector)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+    }, 150);
+  }, [comparison]);
+
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (!(event.ctrlKey || event.metaKey)) return;
+      const key = event.key.toLowerCase();
+      if (key === "enter") {
+        event.preventDefault();
+        compare();
       }
-      return v1 === v2;
+      if (key === "arrowdown" && comparison.length) {
+        event.preventDefault();
+        focusDiff((activeDiffIndex + 1 + comparison.length) % comparison.length);
+      }
+      if (key === "arrowup" && comparison.length) {
+        event.preventDefault();
+        focusDiff((activeDiffIndex - 1 + comparison.length) % comparison.length);
+      }
     };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [activeDiffIndex, compare, comparison.length, focusDiff]);
 
-    if (Array.isArray(obj1) && Array.isArray(obj2)) {
-      const maxLength = Math.max(obj1.length, obj2.length);
-
-      for (let i = 0; i < maxLength; i++) {
-        const currentPath = `${path}[${i}]`;
-
-        if (i >= obj1.length) {
-          differences.push({
-            path: currentPath,
-            type: "added",
-            value: obj2[i],
-          });
-        } else if (i >= obj2.length) {
-          differences.push({
-            path: currentPath,
-            type: "removed",
-            value: obj1[i],
-          });
-        } else {
-          const val1 = obj1[i];
-          const val2 = obj2[i];
-
-          if (
-            typeof val1 === "object" &&
-            val1 !== null &&
-            typeof val2 === "object" &&
-            val2 !== null
-          ) {
-            differences.push(...compareJSON(val1, val2, currentPath, currentSettings));
-          } else if (!isValEqual(val1, val2)) {
-            differences.push({
-              path: currentPath,
-              type: "modified",
-              oldValue: val1,
-              newValue: val2,
-            });
-          }
-        }
-      }
-
-      return differences;
-    }
-
-    const allKeys = new Set([
-      ...Object.keys(obj1 || {}),
-      ...Object.keys(obj2 || {}),
-    ]);
-
-    allKeys.forEach((key) => {
-      const currentPath = path ? `${path}.${key}` : key;
-      const val1 = obj1?.[key];
-      const val2 = obj2?.[key];
-
-      if (!(key in obj1)) {
-        differences.push({
-          path: currentPath,
-          type: "added",
-          value: val2,
-        });
-      } else if (!(key in obj2)) {
-        differences.push({
-          path: currentPath,
-          type: "removed",
-          value: val1,
-        });
-      } else if (
-        typeof val1 === "object" &&
-        val1 !== null &&
-        typeof val2 === "object" &&
-        val2 !== null
-      ) {
-        if (Array.isArray(val1) && Array.isArray(val2)) {
-          differences.push(...compareJSON(val1, val2, currentPath, currentSettings));
-        } else if (!Array.isArray(val1) && !Array.isArray(val2)) {
-          differences.push(...compareJSON(val1, val2, currentPath, currentSettings));
-        } else {
-          differences.push({
-            path: currentPath,
-            type: "modified",
-            oldValue: val1,
-            newValue: val2,
-          });
-        }
-      } else if (!isValEqual(val1, val2)) {
-        differences.push({
-          path: currentPath,
-          type: "modified",
-          oldValue: val1,
-          newValue: val2,
-        });
-      }
+  const copyToClipboard = useCallback((text, type) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(type);
+      setTimeout(() => setCopied(""), 1500);
     });
+  }, []);
 
-    return differences;
-  }, [settings]);
+  const readFile = useCallback((event, setValue, setError, setFileName) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (readerEvent) => {
+      const content = readerEvent.target.result;
+      setValue(content);
+      setFileName(file.name);
+      setError(parseJSONDetailed(content).error);
+    };
+    reader.readAsText(file);
+    event.target.value = "";
+  }, []);
 
-  const handleCompare = useCallback(() => {
-    const parsed1 = validateJSON(json1, setError1);
-    const parsed2 = validateJSON(json2, setError2);
+  const formatJSON = useCallback((value, setValue, setError) => {
+    const result = parseJSONDetailed(value);
+    setError(result.error);
+    if (!result.error) setValue(safeJsonStringify(result.value, 2));
+  }, []);
 
-    if (parsed1 && parsed2) {
-      setParsedJson1(parsed1);
-      setParsedJson2(parsed2);
-      const diffs = compareJSON(parsed1, parsed2);
-      setComparison(diffs);
-      setShowComparison(true);
+  const minifyJSON = useCallback((value, setValue, setError, isMinified, setIsMinified) => {
+    const result = parseJSONDetailed(value);
+    setError(result.error);
+    if (!result.error) {
+      setValue(safeJsonStringify(result.value, isMinified ? 2 : 0));
+      setIsMinified(!isMinified);
     }
-  }, [json1, json2, validateJSON, compareJSON]);
+  }, []);
 
-  const loadSamples = useCallback(() => {
-    setJson1(JSON.stringify(sampleJSON1, null, 2));
-    setJson2(JSON.stringify(sampleJSON2, null, 2));
-    setError1("");
-    setError2("");
-    setFileName1("");
-    setFileName2("");
-    setShowComparison(false);
-    setIsMinified1(false);
-    setIsMinified2(false);
+  const repairInput = useCallback((value, setValue, setError) => {
+    const repaired = repairJSONish(value);
+    setValue(repaired);
+    setError(parseJSONDetailed(repaired).error);
+  }, []);
+
+  const pasteInto = useCallback(async (setValue, setError, setFileName, label) => {
+    const text = await navigator.clipboard.readText();
+    setValue(text);
+    setFileName(label);
+    setError(parseJSONDetailed(text).error);
   }, []);
 
   const reset = useCallback(() => {
     setJson1("");
     setJson2("");
-    setError1("");
-    setError2("");
-    setComparison(null);
+    setError1(null);
+    setError2(null);
+    setParsedJson1(null);
+    setParsedJson2(null);
+    setComparison([]);
     setShowComparison(false);
     setFileName1("");
     setFileName2("");
-    setSearchTerm("");
-    setFilterType("all");
-    setIsMinified1(false);
-    setIsMinified2(false);
-    setParsedJson1(null);
-    setParsedJson2(null);
-    setHoveredPath1("");
-    setHoveredPath2("");
     setPinnedPath1("");
     setPinnedPath2("");
-    setSearchTerm1("");
-    setSearchTerm2("");
-    setCurrentMatchIndex1(-1);
-    setCurrentMatchIndex2(-1);
     setSelectedDiffPath("");
-  }, []);
-
-  const formatJSON = useCallback(
-    (text, setJSON, setError) => {
-      const parsed = validateJSON(text, setError);
-      if (parsed) {
-        setJSON(JSON.stringify(parsed, null, 2));
-      }
-    },
-    [validateJSON]
-  );
-
-  const toggleMinify = useCallback(
-    (json, setJSON, isMinified, setIsMinified, setError) => {
-      const parsed = validateJSON(json, setError);
-      if (parsed) {
-        if (isMinified) {
-          setJSON(JSON.stringify(parsed, null, 2));
-          setIsMinified(false);
-        } else {
-          setJSON(JSON.stringify(parsed));
-          setIsMinified(true);
-        }
-      }
-    },
-    [validateJSON]
-  );
-
-  const swapJSONs = useCallback(() => {
-    const tempJSON = json1;
-    const tempError = error1;
-    const tempFileName = fileName1;
-    const tempMinified = isMinified1;
-
-    setJson1(json2);
-    setError1(error2);
-    setFileName1(fileName2);
-    setIsMinified1(isMinified2);
-
-    setJson2(tempJSON);
-    setError2(tempError);
-    setFileName2(tempFileName);
-    setIsMinified2(tempMinified);
-
-    if (showComparison) {
-      setTimeout(handleCompare, 100);
-    }
-  }, [
-    json1,
-    json2,
-    error1,
-    error2,
-    fileName1,
-    fileName2,
-    isMinified1,
-    isMinified2,
-    showComparison,
-    handleCompare,
-  ]);
-
-  const copyToClipboard = useCallback((text, type) => {
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(type);
-      setTimeout(() => setCopied(""), 2000);
+    Object.values(STORAGE_KEYS).forEach((key) => {
+      if (key !== STORAGE_KEYS.settings && key !== STORAGE_KEYS.editor) localStorage.removeItem(key);
     });
   }, []);
 
-  const getStatistics = useCallback(() => {
-    if (!comparison) return { total: 0, added: 0, removed: 0, modified: 0 };
-
-    return {
-      total: comparison.length,
-      added: comparison.filter((d) => d.type === "added").length,
-      removed: comparison.filter((d) => d.type === "removed").length,
-      modified: comparison.filter((d) => d.type === "modified").length,
-    };
-  }, [comparison]);
-
-  const getFilteredComparison = useCallback(() => {
-    if (!comparison) return [];
-
-    let filtered = comparison;
-
-    if (filterType !== "all") {
-      filtered = filtered.filter((d) => d.type === filterType);
+  const fetchRemote = useCallback(async () => {
+    try {
+      const headers = fetchConfig.headers.trim() ? JSON.parse(fetchConfig.headers) : {};
+      const response = await fetch(fetchConfig.url, {
+        method: fetchConfig.method,
+        headers,
+        body: fetchConfig.method === "GET" ? undefined : fetchConfig.body,
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      const text = safeJsonStringify(data, 2);
+      if (fetchConfig.target === "left") {
+        setJson1(text);
+        setFileName1(fetchConfig.url.split("/").pop() || "fetched-left.json");
+        setError1(null);
+      } else {
+        setJson2(text);
+        setFileName2(fetchConfig.url.split("/").pop() || "fetched-right.json");
+        setError2(null);
+      }
+      setShowFetch(false);
+    } catch (error) {
+      if (fetchConfig.target === "left") setError1({ message: error.message });
+      else setError2({ message: error.message });
     }
+  }, [fetchConfig]);
 
-    if (searchTerm) {
-      filtered = filtered.filter((d) =>
-        d.path.toLowerCase().includes(searchTerm.toLowerCase())
-      );
-    }
-
-    return filtered;
-  }, [comparison, filterType, searchTerm]);
-
-  const handleFileRead = useCallback(
-    (file, setJSON, setError, setFileName) => {
-      if (!file) return;
-
-      if (!file.name.endsWith(".json")) {
-        setError("Please upload a JSON file");
-        return;
-      }
-
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const content = e.target.result;
-        setJSON(content);
-        validateJSON(content, setError);
-        setFileName(file.name);
-      };
-      reader.onerror = () => {
-        setError("Failed to read file");
-      };
-      reader.readAsText(file);
-    },
-    [validateJSON]
-  );
-
-  const handleFileUpload = useCallback(
-    (e, setJSON, setError, setFileName) => {
-      const file = e.target.files[0];
-      handleFileRead(file, setJSON, setError, setFileName);
-    },
-    [handleFileRead]
-  );
-
-  const handleDragOver = useCallback((e, setDragOver) => {
-    e.preventDefault();
-    setDragOver(true);
-  }, []);
-
-  const handleDragLeave = useCallback((e, setDragOver) => {
-    e.preventDefault();
-    setDragOver(false);
-  }, []);
-
-  const handleDrop = useCallback(
-    (e, setJSON, setError, setFileName, setDragOver) => {
-      e.preventDefault();
-      setDragOver(false);
-
-      const file = e.dataTransfer.files[0];
-      handleFileRead(file, setJSON, setError, setFileName);
-    },
-    [handleFileRead]
-  );
-
-  const handlePinPath1 = useCallback(
-    (path) => {
-      setPinnedPath1(pinnedPath1 === path ? "" : path);
-    },
-    [pinnedPath1]
-  );
-
-  const handlePinPath2 = useCallback(
-    (path) => {
-      setPinnedPath2(pinnedPath2 === path ? "" : path);
-    },
-    [pinnedPath2]
-  );
-
-  const handleSearchKeyDown1 = useCallback(
-    (e) => {
-      if (e.key === "Enter" && searchMatches1.length > 0) {
-        e.preventDefault();
-        const nextIndex = (currentMatchIndex1 + 1) % searchMatches1.length;
-        setCurrentMatchIndex1(nextIndex);
-      }
-    },
-    [searchMatches1, currentMatchIndex1]
-  );
-
-  const handleSearchKeyDown2 = useCallback(
-    (e) => {
-      if (e.key === "Enter" && searchMatches2.length > 0) {
-        e.preventDefault();
-        const nextIndex = (currentMatchIndex2 + 1) % searchMatches2.length;
-        setCurrentMatchIndex2(nextIndex);
-      }
-    },
-    [searchMatches2, currentMatchIndex2]
-  );
-
-  const handleDiffClick = useCallback((path) => {
-    setSelectedDiffPath(path);
-    setPinnedPath1(path);
-    setPinnedPath2(path);
-
-    setTimeout(() => {
-      const element1 = scrollRef1.current?.querySelector(
-        `[data-path="${path}"]`
-      );
-      const element2 = scrollRef2.current?.querySelector(
-        `[data-path="${path}"]`
-      );
-
-      if (element1) {
-        element1.scrollIntoView({ behavior: "smooth", block: "center" });
-      }
-      if (element2) {
-        element2.scrollIntoView({ behavior: "smooth", block: "center" });
-      }
-    }, 400);
-  }, []);
-
-  useEffect(() => {
-    setCurrentMatchIndex1(-1);
-  }, [debouncedSearchTerm1]);
-
-  useEffect(() => {
-    setCurrentMatchIndex2(-1);
-  }, [debouncedSearchTerm2]);
-
-  const stats = useMemo(() => getStatistics(), [getStatistics]);
-  const filteredComparison = useMemo(
-    () => getFilteredComparison(),
-    [getFilteredComparison]
-  );
-
-  const truncateValue = useCallback((val, maxLength = 50) => {
-    const str = JSON.stringify(val);
-    return str.length > maxLength ? str.substring(0, maxLength) + "..." : str;
-  }, []);
+  const resultValue = selectedDiffPath ? {
+    left: getValueAtPath(parsedJson1, selectedDiffPath),
+    right: getValueAtPath(parsedJson2, selectedDiffPath),
+  } : null;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-200 selection:bg-purple-500/30 font-sans relative pb-10">
-      <Analytics/>
-      
-      {/* Navbar Minimal */}
-      <nav className="fixed top-0 w-full z-50 border-b border-slate-800/50 bg-slate-950/80 backdrop-blur-md">
-        <div className="max-w-[120rem] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2 cursor-pointer transition-transform hover:scale-105" onClick={() => navigate('/')}>
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-600 to-blue-600 flex items-center justify-center">
-              <GitCompare className="w-5 h-5 text-white" />
+    <div className="min-h-screen bg-slate-950 pb-10 font-sans text-slate-200 selection:bg-purple-500/30">
+      <Analytics />
+      <nav className="fixed top-0 z-50 w-full border-b border-slate-800/50 bg-slate-950/80 backdrop-blur-md">
+        <div className="mx-auto flex h-16 max-w-[120rem] items-center justify-between px-4 sm:px-6">
+          <div className="flex cursor-pointer items-center gap-2 transition-transform hover:scale-105" onClick={() => navigate("/")}>
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-purple-600 to-blue-600">
+              <GitCompare className="h-5 w-5 text-white" />
             </div>
-            <span className="font-bold text-xl text-white tracking-tight hidden sm:block">JSON<span className="text-purple-400">Sync</span></span>
+            <span className="hidden text-xl font-bold tracking-tight text-white sm:block">JSON<span className="text-purple-400">Sync</span></span>
           </div>
-          <button 
-            onClick={() => navigate('/')}
-            className="px-4 py-2 rounded-full bg-white/10 hover:bg-white/20 text-white text-sm font-medium transition-colors flex items-center gap-2"
-          >
-            <Home className="w-4 h-4" />
+          <button onClick={() => navigate("/")} className="flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-sm font-medium text-white hover:bg-white/20">
+            <Home className="h-4 w-4" />
             <span className="hidden sm:inline">Back to Home</span>
           </button>
         </div>
       </nav>
 
-      <div className="pt-24 px-4 sm:px-6 relative">
-        <div className="absolute top-0 right-0 w-[400px] h-[400px] bg-purple-500/10 blur-[100px] rounded-full point-events-none" />
-        <div className="absolute top-1/4 left-0 w-[500px] h-[500px] bg-blue-500/10 blur-[120px] rounded-full point-events-none" />
-        
+      <main className="mx-auto max-w-[120rem] px-4 pt-24 sm:px-6">
+        <div className="mb-8 text-center">
+          <h1 className="text-4xl font-extrabold tracking-tight text-white md:text-5xl">JSON Workspace</h1>
+          <p className="mx-auto mt-3 max-w-2xl text-lg text-slate-400">Compare payloads, validate shape, export patches, and navigate nested drift quickly.</p>
+        </div>
+
+        <div className="mb-6 flex flex-wrap justify-center gap-3">
+          <button onClick={() => { setJson1(safeJsonStringify(sampleJSON1, 2)); setJson2(safeJsonStringify(sampleJSON2, 2)); setFileName1("sample-left.json"); setFileName2("sample-right.json"); }} className="flex items-center gap-2 rounded-full border border-slate-700 bg-slate-800 px-5 py-2.5 text-white hover:bg-slate-700">
+            <Copy className="h-4 w-4 text-purple-400" /> Load Sample
+          </button>
+          <button onClick={() => { setJson1(json2); setJson2(json1); setFileName1(fileName2); setFileName2(fileName1); }} className="flex items-center gap-2 rounded-full border border-slate-700 bg-slate-800 px-5 py-2.5 text-white hover:bg-slate-700">
+            <ArrowLeftRight className="h-4 w-4 text-blue-400" /> Swap
+          </button>
+          <button onClick={compare} className="flex items-center gap-2 rounded-full bg-purple-600 px-8 py-2.5 font-bold tracking-wide text-white shadow-[0_0_20px_-5px_rgba(168,85,247,0.5)] hover:bg-purple-500">
+            <GitCompare className="h-4 w-4" /> Compare Now
+          </button>
+          <button onClick={() => setShowSettings(true)} className="flex items-center gap-2 rounded-full border border-slate-700 bg-slate-800 px-5 py-2.5 text-white hover:bg-slate-700">
+            <Settings2 className="h-4 w-4 text-purple-400" /> Settings
+          </button>
+          <button onClick={() => setShowSchema((current) => !current)} className="flex items-center gap-2 rounded-full border border-slate-700 bg-slate-800 px-5 py-2.5 text-white hover:bg-slate-700">
+            <FileJson className="h-4 w-4 text-green-400" /> Schema
+          </button>
+          <button onClick={() => setShowFetch((current) => !current)} className="flex items-center gap-2 rounded-full border border-slate-700 bg-slate-800 px-5 py-2.5 text-white hover:bg-slate-700">
+            <Link2 className="h-4 w-4 text-blue-400" /> Request
+          </button>
+          <button onClick={reset} className="flex items-center gap-2 rounded-full border border-red-900/50 bg-red-900/40 px-5 py-2.5 text-red-200 hover:bg-red-900/60">
+            <RotateCcw className="h-4 w-4" /> Reset
+          </button>
+        </div>
+
         {showSettings && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-800 rounded-xl p-6 border border-purple-500/30 max-w-md w-full shadow-2xl">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                <Settings2 className="w-5 h-5 text-purple-400" />
-                Comparison Settings
-              </h2>
-              <button onClick={() => setShowSettings(false)} className="text-slate-400 hover:text-white">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            
-            <div className="space-y-4">
-              <label className="flex items-center gap-3 text-slate-200 cursor-pointer">
-                <input 
-                  type="checkbox" 
-                  checked={settings.ignoreCase} 
-                  onChange={e => setSettings({...settings, ignoreCase: e.target.checked})}
-                  className="w-4 h-4 rounded border-slate-600 text-purple-600 focus:ring-purple-500 bg-slate-700"
-                />
-                <span>Ignore Case Sensitivity</span>
-              </label>
-              
-              <div>
-                <label className="block text-sm text-slate-300 mb-1">
-                  Number Tolerance (Float comparison)
-                </label>
-                <input 
-                  type="number" 
-                  value={settings.numberTolerance} 
-                  onChange={e => setSettings({...settings, numberTolerance: parseFloat(e.target.value) || 0})}
-                  step="0.0001"
-                  min="0"
-                  className="w-full px-3 py-2 bg-slate-900/50 text-white rounded border border-slate-700 focus:border-purple-500 focus:outline-none text-sm"
-                />
-                <p className="text-xs text-slate-500 mt-1">Numbers within this difference will be considered equal.</p>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+            <div className="max-h-[90vh] w-full max-w-3xl overflow-auto rounded-xl border border-purple-500/30 bg-slate-800 p-6 shadow-2xl">
+              <div className="mb-5 flex items-center justify-between">
+                <h2 className="flex items-center gap-2 text-xl font-bold text-white"><Settings2 className="h-5 w-5 text-purple-400" /> Workspace Settings</h2>
+                <button onClick={() => setShowSettings(false)} className="rounded p-1 text-slate-400 hover:bg-slate-700 hover:text-white"><X className="h-5 w-5" /></button>
               </div>
-            </div>
-            
-            <div className="mt-6 flex justify-end">
-              <button 
-                onClick={() => { setShowSettings(false); if(showComparison) setTimeout(handleCompare, 100); }} 
-                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors text-sm font-semibold"
-              >
-                Apply & Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div className="max-w-[120rem] mx-auto w-full relative z-10">
-        <div className="text-center mb-8">
-          <div className="flex items-center justify-center gap-3 mb-4">
-            <h1 className="text-4xl md:text-5xl font-extrabold text-white tracking-tight">JSON Workspace</h1>
-          </div>
-          <p className="text-slate-400 text-lg max-w-2xl mx-auto">
-            Compare payloads, formats, and find the drift.
-          </p>
-        </div>
-
-        <div className="flex gap-4 mb-8 justify-center flex-wrap">
-          <button
-            onClick={loadSamples}
-            className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white rounded-full flex items-center gap-2 transition-all shadow-sm"
-          >
-            <Copy className="w-4 h-4 text-purple-400" />
-            Load Sample
-          </button>
-          <button
-            onClick={swapJSONs}
-            className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white rounded-full flex items-center gap-2 transition-all shadow-sm"
-            title="Swap left and right JSON"
-          >
-            <ArrowLeftRight className="w-4 h-4 text-blue-400" />
-            Swap
-          </button>
-          <button
-            onClick={handleCompare}
-            className="px-8 py-2.5 bg-purple-600 hover:bg-purple-500 text-white rounded-full flex items-center gap-2 transition-all shadow-[0_0_20px_-5px_rgba(168,85,247,0.5)] font-bold tracking-wide"
-          >
-            <GitCompare className="w-4 h-4" />
-            Compare Now
-          </button>
-          <button
-            onClick={reset}
-            className="px-5 py-2.5 bg-red-900/40 hover:bg-red-900/60 border border-red-900/50 text-red-200 rounded-full flex items-center gap-2 transition-all"
-          >
-            <RotateCcw className="w-4 h-4" />
-            Reset
-          </button>
-        </div>
-
-        <div className={`flex flex-col ${showComparison && comparison ? 'xl:flex-row' : ''} gap-6 items-start w-full`}>
-          <div className={`w-full ${showComparison && comparison ? 'xl:w-[35%] flex flex-col' : 'grid md:grid-cols-2'} gap-4`}>
-          <div className="bg-slate-800/50 backdrop-blur rounded-xl p-4 border border-purple-500/30">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-xl font-semibold text-white flex items-center gap-2">
-                <span className="w-8 h-8 bg-purple-600 rounded-full flex items-center justify-center text-sm">
-                  1
-                </span>
-                First JSON
-              </h3>
-              <div className="flex gap-2 flex-wrap">
-                <button
-                  onClick={() => setShowSettings(!showSettings)}
-                  className="text-sm px-3 py-1 bg-slate-600/50 hover:bg-slate-500 text-white rounded transition-colors flex items-center gap-1"
-                >
-                  <Settings2 className="w-3 h-3" />
-                  Settings
-                </button>
-                <button
-                  onClick={() => setShowFetch1(!showFetch1)}
-                  className="text-sm px-3 py-1 bg-purple-600/50 hover:bg-purple-600 text-white rounded transition-colors flex items-center gap-1"
-                >
-                  <Link2 className="w-3 h-3" />
-                  Fetch URL
-                </button>
-                <button
-                  onClick={() => fileInput1Ref.current?.click()}
-                  className="text-sm px-3 py-1 bg-purple-600/50 hover:bg-purple-600 text-white rounded transition-colors flex items-center gap-1"
-                >
-                  <Upload className="w-3 h-3" />
-                  Upload
-                </button>
-                <button
-                  onClick={() =>
-                    toggleMinify(
-                      json1,
-                      setJson1,
-                      isMinified1,
-                      setIsMinified1,
-                      setError1
-                    )
-                  }
-                  className="text-sm px-3 py-1 bg-purple-600/50 hover:bg-purple-600 text-white rounded transition-colors flex items-center gap-1"
-                  title={isMinified1 ? "Expand" : "Minify"}
-                >
-                  {isMinified1 ? (
-                    <Maximize2 className="w-3 h-3" />
-                  ) : (
-                    <Minimize2 className="w-3 h-3" />
-                  )}
-                </button>
-                <button
-                  onClick={() => formatJSON(json1, setJson1, setError1)}
-                  className="text-sm px-3 py-1 bg-purple-600/50 hover:bg-purple-600 text-white rounded transition-colors"
-                >
-                  Format
-                </button>
-                <button
-                  onClick={() => copyToClipboard(json1, "json1")}
-                  className="text-sm px-3 py-1 bg-purple-600/50 hover:bg-purple-600 text-white rounded transition-colors flex items-center gap-1"
-                >
-                  {copied === "json1" ? (
-                    <Check className="w-3 h-3" />
-                  ) : (
-                    <Copy className="w-3 h-3" />
-                  )}
-                </button>
-              </div>
-            </div>
-
-            <input
-              ref={fileInput1Ref}
-              type="file"
-              accept=".json"
-              onChange={(e) =>
-                handleFileUpload(e, setJson1, setError1, setFileName1)
-              }
-              className="hidden"
-            />
-
-            {fileName1 && (
-              <div className="mb-2 text-sm text-purple-300 flex items-center gap-2">
-                <FileJson className="w-4 h-4" />
-                <span className="truncate">{fileName1}</span>
-              </div>
-            )}
-
-            {showFetch1 && (
-              <div className="mb-3 flex gap-2">
-                <input 
-                  type="text" 
-                  value={fetchUrl1} 
-                  onChange={e => setFetchUrl1(e.target.value)} 
-                  placeholder="https://api.example.com/data" 
-                  className="flex-1 px-3 py-1.5 bg-slate-900/50 text-white rounded border border-slate-700 focus:border-purple-500 focus:outline-none text-sm"
-                />
-                <button 
-                  onClick={async () => {
-                    try {
-                      setError1("");
-                      const res = await fetch(fetchUrl1);
-                      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-                      const data = await res.json();
-                      const txt = JSON.stringify(data, null, 2);
-                      setJson1(txt);
-                      setFileName1(fetchUrl1.split('/').pop() || "fetched-data.json");
-                      setShowFetch1(false);
-                      validateJSON(txt, setError1);
-                    } catch(e) {
-                      setError1(e.message);
-                    }
-                  }}
-                  className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded text-sm transition-colors"
-                >
-                  Fetch
-                </button>
-              </div>
-            )}
-
-            <div
-              onDragOver={(e) => handleDragOver(e, setDragOver1)}
-              onDragLeave={(e) => handleDragLeave(e, setDragOver1)}
-              onDrop={(e) =>
-                handleDrop(e, setJson1, setError1, setFileName1, setDragOver1)
-              }
-              className={`relative ${dragOver1 ? "ring-2 ring-purple-500" : ""
-                }`}
-            >
-              <div className="w-full h-80 bg-[#1e1e1e] rounded-lg border border-slate-700 overflow-hidden relative">
-                <Editor
-                  height="100%"
-                  defaultLanguage="json"
-                  theme="vs-dark"
-                  value={json1}
-                  onChange={(value) => {
-                    const text = value || "";
-                    setJson1(text);
-                    validateJSON(text, setError1);
-                  }}
-                  options={{
-                    minimap: { enabled: false },
-                    fontSize: 13,
-                    wordWrap: "on",
-                    formatOnPaste: true,
-                    scrollBeyondLastLine: false,
-                  }}
-                />
-              </div>
-              {dragOver1 && (
-                <div className="absolute inset-0 bg-purple-600/20 z-10 rounded-lg flex items-center justify-center pointer-events-none">
-                  <div className="text-purple-300 font-semibold flex flex-col items-center gap-2 bg-slate-900/80 p-6 rounded-xl">
-                    <Upload className="w-8 h-8" />
-                    Drop JSON file here
+              <div className="grid gap-5 md:grid-cols-2">
+                <div className="space-y-3">
+                  <h3 className="font-semibold text-white">Comparison</h3>
+                  {[
+                    ["ignoreCase", "Ignore string case"],
+                    ["ignoreKeyCase", "Ignore key case"],
+                    ["stringNumberEquivalence", "Treat numeric strings as numbers"],
+                  ].map(([key, label]) => (
+                    <label key={key} className="flex items-center gap-3 text-sm text-slate-200">
+                      <input type="checkbox" checked={settings[key]} onChange={(event) => setSettings({ ...settings, [key]: event.target.checked })} />
+                      {label}
+                    </label>
+                  ))}
+                  <div>
+                    <FieldLabel>Number Tolerance</FieldLabel>
+                    <input type="number" min="0" step="0.0001" value={settings.numberTolerance} onChange={(event) => setSettings({ ...settings, numberTolerance: Number(event.target.value) || 0 })} className="w-full rounded border border-slate-700 bg-slate-950/60 px-3 py-2 text-white outline-none focus:border-purple-500" />
                   </div>
-                </div>
-              )}
-            </div>
-
-            {error1 && (
-              <div className="mt-2 flex items-start gap-2 text-red-400 text-sm">
-                <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                <span>{error1}</span>
-              </div>
-            )}
-            {!error1 && json1 && (
-              <div className="mt-2 flex items-center gap-2 text-green-400 text-sm">
-                <CheckCircle className="w-4 h-4" />
-                <span>Valid JSON</span>
-              </div>
-            )}
-          </div>
-
-          <div className="bg-slate-800/50 backdrop-blur rounded-xl p-4 border border-purple-500/30">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-xl font-semibold text-white flex items-center gap-2">
-                <span className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-sm">
-                  2
-                </span>
-                Second JSON
-              </h3>
-              <div className="flex gap-2 flex-wrap">
-                <button
-                  onClick={() => setShowFetch2(!showFetch2)}
-                  className="text-sm px-3 py-1 bg-blue-600/50 hover:bg-blue-600 text-white rounded transition-colors flex items-center gap-1"
-                >
-                  <Link2 className="w-3 h-3" />
-                  Fetch URL
-                </button>
-                <button
-                  onClick={() => fileInput2Ref.current?.click()}
-                  className="text-sm px-3 py-1 bg-blue-600/50 hover:bg-blue-600 text-white rounded transition-colors flex items-center gap-1"
-                >
-                  <Upload className="w-3 h-3" />
-                  Upload
-                </button>
-                <button
-                  onClick={() =>
-                    toggleMinify(
-                      json2,
-                      setJson2,
-                      isMinified2,
-                      setIsMinified2,
-                      setError2
-                    )
-                  }
-                  className="text-sm px-3 py-1 bg-blue-600/50 hover:bg-blue-600 text-white rounded transition-colors flex items-center gap-1"
-                  title={isMinified2 ? "Expand" : "Minify"}
-                >
-                  {isMinified2 ? (
-                    <Maximize2 className="w-3 h-3" />
-                  ) : (
-                    <Minimize2 className="w-3 h-3" />
-                  )}
-                </button>
-                <button
-                  onClick={() => formatJSON(json2, setJson2, setError2)}
-                  className="text-sm px-3 py-1 bg-blue-600/50 hover:bg-blue-600 text-white rounded transition-colors"
-                >
-                  Format
-                </button>
-                <button
-                  onClick={() => copyToClipboard(json2, "json2")}
-                  className="text-sm px-3 py-1 bg-blue-600/50 hover:bg-blue-600 text-white rounded transition-colors flex items-center gap-1"
-                >
-                  {copied === "json2" ? (
-                    <Check className="w-3 h-3" />
-                  ) : (
-                    <Copy className="w-3 h-3" />
-                  )}
-                </button>
-              </div>
-            </div>
-
-            <input
-              ref={fileInput2Ref}
-              type="file"
-              accept=".json"
-              onChange={(e) =>
-                handleFileUpload(e, setJson2, setError2, setFileName2)
-              }
-              className="hidden"
-            />
-
-            {fileName2 && (
-              <div className="mb-2 text-sm text-blue-300 flex items-center gap-2">
-                <FileJson className="w-4 h-4" />
-                <span className="truncate">{fileName2}</span>
-              </div>
-            )}
-
-            {showFetch2 && (
-              <div className="mb-3 flex gap-2">
-                <input 
-                  type="text" 
-                  value={fetchUrl2} 
-                  onChange={e => setFetchUrl2(e.target.value)} 
-                  placeholder="https://api.example.com/data" 
-                  className="flex-1 px-3 py-1.5 bg-slate-900/50 text-white rounded border border-slate-700 focus:border-blue-500 focus:outline-none text-sm"
-                />
-                <button 
-                  onClick={async () => {
-                    try {
-                      setError2("");
-                      const res = await fetch(fetchUrl2);
-                      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-                      const data = await res.json();
-                      const txt = JSON.stringify(data, null, 2);
-                      setJson2(txt);
-                      setFileName2(fetchUrl2.split('/').pop() || "fetched-data.json");
-                      setShowFetch2(false);
-                      validateJSON(txt, setError2);
-                    } catch(e) {
-                      setError2(e.message);
-                    }
-                  }}
-                  className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded text-sm transition-colors"
-                >
-                  Fetch
-                </button>
-              </div>
-            )}
-
-            <div
-              onDragOver={(e) => handleDragOver(e, setDragOver2)}
-              onDragLeave={(e) => handleDragLeave(e, setDragOver2)}
-              onDrop={(e) =>
-                handleDrop(e, setJson2, setError2, setFileName2, setDragOver2)
-              }
-              className={`relative ${dragOver2 ? "ring-2 ring-blue-500" : ""}`}
-            >
-              <div className="w-full h-80 bg-[#1e1e1e] rounded-lg border border-slate-700 overflow-hidden relative">
-                <Editor
-                  height="100%"
-                  defaultLanguage="json"
-                  theme="vs-dark"
-                  value={json2}
-                  onChange={(value) => {
-                    const text = value || "";
-                    setJson2(text);
-                    validateJSON(text, setError2);
-                  }}
-                  options={{
-                    minimap: { enabled: false },
-                    fontSize: 13,
-                    wordWrap: "on",
-                    formatOnPaste: true,
-                    scrollBeyondLastLine: false,
-                  }}
-                />
-              </div>
-              {dragOver2 && (
-                <div className="absolute inset-0 bg-blue-600/20 z-10 rounded-lg flex items-center justify-center pointer-events-none">
-                  <div className="text-blue-300 font-semibold flex flex-col items-center gap-2 bg-slate-900/80 p-6 rounded-xl">
-                    <Upload className="w-8 h-8" />
-                    Drop JSON file here
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {error2 && (
-              <div className="mt-2 flex items-start gap-2 text-red-400 text-sm">
-                <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                <span>{error2}</span>
-              </div>
-            )}
-            {!error2 && json2 && (
-              <div className="mt-2 flex items-center gap-2 text-green-400 text-sm">
-                <CheckCircle className="w-4 h-4" />
-                <span>Valid JSON</span>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {showComparison && comparison && (
-          <div className="w-full xl:w-[65%]">
-            <div className="bg-slate-800/50 backdrop-blur rounded-t-xl p-4 border border-purple-500/30 border-b-0">
-              <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
-                <div className="flex items-center gap-4 flex-wrap">
-                  <h3 className="text-xl font-semibold text-white flex items-center gap-2">
-                    <GitCompare className="w-6 h-6 text-purple-400" />
-                    Tree View Comparison
-                  </h3>
-                  <div className="flex gap-3 text-sm">
-                    <span className="px-3 py-1 bg-purple-900/50 text-purple-200 rounded-full">
-                      Total:{" "}
-                      <strong className="text-white">{stats.total}</strong>
-                    </span>
-                    <span className="px-3 py-1 bg-green-900/50 text-green-300 rounded-full">
-                      Added:{" "}
-                      <strong className="text-green-400">{stats.added}</strong>
-                    </span>
-                    <span className="px-3 py-1 bg-red-900/50 text-red-300 rounded-full">
-                      Removed:{" "}
-                      <strong className="text-red-400">{stats.removed}</strong>
-                    </span>
-                    <span className="px-3 py-1 bg-yellow-900/50 text-yellow-300 rounded-full">
-                      Modified:{" "}
-                      <strong className="text-yellow-400">
-                        {stats.modified}
-                      </strong>
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex gap-2 flex-wrap items-center">
-                  <div className="relative">
-                    <Filter className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-purple-400 pointer-events-none" />
-                    <select
-                      value={filterType}
-                      onChange={(e) => setFilterType(e.target.value)}
-                      className="pl-10 pr-4 py-1.5 bg-slate-700 text-white rounded-lg border border-slate-600 focus:border-purple-500 focus:outline-none text-sm appearance-none cursor-pointer"
-                    >
-                      <option value="all">All Changes</option>
-                      <option value="added">Added Only</option>
-                      <option value="removed">Removed Only</option>
-                      <option value="modified">Modified Only</option>
+                  <div>
+                    <FieldLabel>Array Mode</FieldLabel>
+                    <select value={settings.arrayMode} onChange={(event) => setSettings({ ...settings, arrayMode: event.target.value })} className="w-full rounded border border-slate-700 bg-slate-950/60 px-3 py-2 text-white outline-none focus:border-purple-500">
+                      <option value="index">Compare by index</option>
+                      <option value="ignore-order">Ignore order</option>
+                      <option value="match-key">Match objects by key</option>
                     </select>
                   </div>
-
-                  {comparison.length > 0 && (
-                    <>
-                      <button
-                        onClick={() => {
-                          const blob = new Blob([JSON.stringify(comparison, null, 2)], { type: "application/json" });
-                          const url = URL.createObjectURL(blob);
-                          const a = document.createElement("a");
-                          a.href = url;
-                          a.download = "json-diff.json";
-                          a.click();
-                        }}
-                        className="px-3 py-1.5 bg-purple-700 hover:bg-purple-600 text-white rounded-lg flex items-center gap-2 text-sm transition-colors"
-                      >
-                        <Download className="w-4 h-4" />
-                        Download
-                      </button>
-                      <button
-                        onClick={() =>
-                          copyToClipboard(
-                            JSON.stringify(comparison, null, 2),
-                            "results"
-                          )
-                        }
-                        className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg flex items-center gap-2 text-sm transition-colors"
-                      >
-                        {copied === "results" ? (
-                          <Check className="w-4 h-4" />
-                        ) : (
-                          <Copy className="w-4 h-4" />
-                        )}
-                        {copied === "results" ? "Copied!" : "Copy"}
-                      </button>
-                    </>
-                  )}
+                  <div>
+                    <FieldLabel>Array Match Key</FieldLabel>
+                    <input value={settings.arrayMatchKey} onChange={(event) => setSettings({ ...settings, arrayMatchKey: event.target.value })} className="w-full rounded border border-slate-700 bg-slate-950/60 px-3 py-2 text-white outline-none focus:border-purple-500" />
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  <h3 className="font-semibold text-white">Editor</h3>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <FieldLabel>Font Size</FieldLabel>
+                      <input type="number" min="10" max="24" value={editorSettings.fontSize} onChange={(event) => setEditorSettings({ ...editorSettings, fontSize: Number(event.target.value) || 13 })} className="w-full rounded border border-slate-700 bg-slate-950/60 px-3 py-2 text-white" />
+                    </div>
+                    <div>
+                      <FieldLabel>Tab Size</FieldLabel>
+                      <input type="number" min="2" max="8" value={editorSettings.tabSize} onChange={(event) => setEditorSettings({ ...editorSettings, tabSize: Number(event.target.value) || 2 })} className="w-full rounded border border-slate-700 bg-slate-950/60 px-3 py-2 text-white" />
+                    </div>
+                  </div>
+                  <label className="flex items-center gap-3 text-sm text-slate-200">
+                    <input type="checkbox" checked={editorSettings.minimap} onChange={(event) => setEditorSettings({ ...editorSettings, minimap: event.target.checked })} />
+                    Show minimap
+                  </label>
+                  <label className="flex items-center gap-3 text-sm text-slate-200">
+                    <input type="checkbox" checked={editorSettings.autoFormatOnPaste} onChange={(event) => setEditorSettings({ ...editorSettings, autoFormatOnPaste: event.target.checked })} />
+                    Format on paste
+                  </label>
+                  <div>
+                    <FieldLabel>Word Wrap</FieldLabel>
+                    <select value={editorSettings.wordWrap} onChange={(event) => setEditorSettings({ ...editorSettings, wordWrap: event.target.value })} className="w-full rounded border border-slate-700 bg-slate-950/60 px-3 py-2 text-white">
+                      <option value="on">On</option>
+                      <option value="off">Off</option>
+                      <option value="wordWrapColumn">Column</option>
+                    </select>
+                  </div>
+                  <div>
+                    <FieldLabel>Ignore Paths</FieldLabel>
+                    <textarea value={settings.ignorePaths} onChange={(event) => setSettings({ ...settings, ignorePaths: event.target.value })} rows={3} placeholder="metadata.updatedAt&#10;/^debug\\./" className="w-full rounded border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm text-white outline-none focus:border-purple-500" />
+                  </div>
+                  <div>
+                    <FieldLabel>Include Paths</FieldLabel>
+                    <textarea value={settings.includePaths} onChange={(event) => setSettings({ ...settings, includePaths: event.target.value })} rows={3} placeholder="users&#10;address.city" className="w-full rounded border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm text-white outline-none focus:border-purple-500" />
+                  </div>
                 </div>
               </div>
+              <div className="mt-6 flex justify-end gap-3">
+                <button onClick={() => setSettings(defaultSettings)} className="rounded bg-slate-700 px-4 py-2 text-sm text-white hover:bg-slate-600">Reset Settings</button>
+                <button onClick={() => { setShowSettings(false); if (showComparison) compare(); }} className="rounded bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-500">Apply</button>
+              </div>
+            </div>
+          </div>
+        )}
 
-              {filteredComparison.length > 0 && (
-                <div className="mt-4 max-h-60 overflow-y-auto bg-slate-900/50 rounded-lg p-3">
-                  <div className="text-sm text-purple-200 mb-3 font-semibold flex items-center gap-2">
-                    <Eye className="w-4 h-4" />
-                    {filteredComparison.length} Difference(s) - Click to view
+        {showSchema && (
+          <section className="mb-6 rounded-xl border border-green-500/30 bg-slate-800/50 p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="font-semibold text-white">JSON Schema Validation</h3>
+              <button onClick={() => setSchemaText("")} className="text-sm text-slate-400 hover:text-white">Clear</button>
+            </div>
+            <textarea value={schemaText} onChange={(event) => setSchemaText(event.target.value)} rows={6} placeholder='{"type":"object","required":["id"],"properties":{"id":{"type":"string"}}}' className="w-full rounded-lg border border-slate-700 bg-slate-950/70 p-3 font-mono text-sm text-white outline-none focus:border-green-500" />
+            {(schemaErrors1.length > 0 || schemaErrors2.length > 0) && (
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                {[["First JSON", schemaErrors1], ["Second JSON", schemaErrors2]].map(([label, errors]) => (
+                  <div key={label} className="rounded-lg bg-slate-950/60 p-3">
+                    <div className="mb-2 text-sm font-semibold text-white">{label}: {errors.length} schema issue(s)</div>
+                    {errors.slice(0, 8).map((error, index) => <div key={`${error.path}-${index}`} className="text-xs text-red-300"><code>{error.path}</code> - {error.message}</div>)}
                   </div>
-                  <div className="space-y-2">
-                    {filteredComparison.map((diff, index) => (
-                      <div
-                        key={index}
-                        onClick={() => handleDiffClick(diff.path)}
-                        className={`p-2 rounded-lg border cursor-pointer transition-all hover:scale-[1.01] ${selectedDiffPath === diff.path
-                            ? "border-purple-500 bg-purple-900/30 ring-2 ring-purple-500"
-                            : "border-slate-700 bg-slate-800/30 hover:border-slate-600"
-                          } ${diff.type === "added"
-                            ? "hover:bg-green-900/20"
-                            : diff.type === "removed"
-                              ? "hover:bg-red-900/20"
-                              : "hover:bg-yellow-900/20"
-                          }`}
-                      >
-                        <div className="flex items-center gap-2 mb-1">
-                          <span
-                            className={`px-2 py-0.5 rounded text-xs font-bold ${diff.type === "added"
-                                ? "bg-green-600/50 text-green-200"
-                                : diff.type === "removed"
-                                  ? "bg-red-600/50 text-red-200"
-                                  : "bg-yellow-600/50 text-yellow-200"
-                              }`}
-                          >
-                            {diff.type.toUpperCase()}
-                          </span>
-                          <code className="text-xs text-purple-300 font-mono">
-                            {diff.path}
-                          </code>
-                        </div>
-                        <div className="text-xs text-slate-300 font-mono ml-2">
-                          {diff.type === "added" && (
-                            <div className="flex items-center gap-1">
-                              <span className="text-green-400">+</span>
-                              <span className="text-emerald-300">
-                                {truncateValue(diff.value)}
-                              </span>
-                            </div>
-                          )}
-                          {diff.type === "removed" && (
-                            <div className="flex items-center gap-1">
-                              <span className="text-red-400">-</span>
-                              <span className="text-red-300">
-                                {truncateValue(diff.value)}
-                              </span>
-                            </div>
-                          )}
-                          {diff.type === "modified" && (
-                            <div className="space-y-1">
-                              <div className="flex items-center gap-1">
-                                <span className="text-red-400">-</span>
-                                <span className="text-red-300">
-                                  {truncateValue(diff.oldValue)}
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-1">
-                                <span className="text-green-400">+</span>
-                                <span className="text-green-300">
-                                  {truncateValue(diff.newValue)}
-                                </span>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      </div>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
+        {showFetch && (
+          <section className="mb-6 rounded-xl border border-blue-500/30 bg-slate-800/50 p-4">
+            <div className="grid gap-3 md:grid-cols-[120px_120px_1fr_auto]">
+              <select value={fetchConfig.target} onChange={(event) => setFetchConfig({ ...fetchConfig, target: event.target.value })} className="rounded border border-slate-700 bg-slate-950/70 px-3 py-2 text-white">
+                <option value="left">First</option>
+                <option value="right">Second</option>
+              </select>
+              <select value={fetchConfig.method} onChange={(event) => setFetchConfig({ ...fetchConfig, method: event.target.value })} className="rounded border border-slate-700 bg-slate-950/70 px-3 py-2 text-white">
+                <option>GET</option>
+                <option>POST</option>
+                <option>PUT</option>
+              </select>
+              <input value={fetchConfig.url} onChange={(event) => setFetchConfig({ ...fetchConfig, url: event.target.value })} placeholder="https://api.example.com/data" className="rounded border border-slate-700 bg-slate-950/70 px-3 py-2 text-white outline-none focus:border-blue-500" />
+              <button onClick={fetchRemote} className="rounded bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-500">Fetch</button>
+            </div>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <textarea value={fetchConfig.headers} onChange={(event) => setFetchConfig({ ...fetchConfig, headers: event.target.value })} rows={3} placeholder='Headers JSON, e.g. {"Authorization":"Bearer token"}' className="rounded border border-slate-700 bg-slate-950/70 p-3 font-mono text-sm text-white" />
+              <textarea value={fetchConfig.body} onChange={(event) => setFetchConfig({ ...fetchConfig, body: event.target.value })} rows={3} placeholder="Request body for POST/PUT" className="rounded border border-slate-700 bg-slate-950/70 p-3 font-mono text-sm text-white" />
+            </div>
+          </section>
+        )}
+
+        <section className={`grid gap-4 ${showComparison ? "xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]" : "md:grid-cols-2"}`}>
+          <div className={`grid gap-4 ${showComparison ? "" : "md:col-span-2 md:grid-cols-2"}`}>
+            <EditorPanel
+              side="left"
+              title="First JSON"
+              value={json1}
+              setValue={setJson1}
+              error={error1}
+              setError={setError1}
+              fileName={fileName1}
+              setFileName={setFileName1}
+              dragOver={dragOver1}
+              setDragOver={setDragOver1}
+              editorSettings={editorSettings}
+              onEditorMount={(editor) => { editor1Ref.current = editor; }}
+              onFormat={() => formatJSON(json1, setJson1, setError1)}
+              onMinify={() => minifyJSON(json1, setJson1, setError1, isMinified1, setIsMinified1)}
+              onRepair={() => repairInput(json1, setJson1, setError1)}
+              onPaste={() => pasteInto(setJson1, setError1, setFileName1, "Pasted JSON 1")}
+              onCopy={() => copyToClipboard(json1, "json1")}
+              onUpload={(event) => readFile(event, setJson1, setError1, setFileName1)}
+              inputRef={fileInput1Ref}
+              isMinified={isMinified1}
+            />
+            <EditorPanel
+              side="right"
+              title="Second JSON"
+              value={json2}
+              setValue={setJson2}
+              error={error2}
+              setError={setError2}
+              fileName={fileName2}
+              setFileName={setFileName2}
+              dragOver={dragOver2}
+              setDragOver={setDragOver2}
+              editorSettings={editorSettings}
+              onEditorMount={(editor) => { editor2Ref.current = editor; }}
+              onFormat={() => formatJSON(json2, setJson2, setError2)}
+              onMinify={() => minifyJSON(json2, setJson2, setError2, isMinified2, setIsMinified2)}
+              onRepair={() => repairInput(json2, setJson2, setError2)}
+              onPaste={() => pasteInto(setJson2, setError2, setFileName2, "Pasted JSON 2")}
+              onCopy={() => copyToClipboard(json2, "json2")}
+              onUpload={(event) => readFile(event, setJson2, setError2, setFileName2)}
+              inputRef={fileInput2Ref}
+              isMinified={isMinified2}
+            />
+          </div>
+
+          {showComparison && (
+            <div className="rounded-xl border border-purple-500/30 bg-slate-800/50 backdrop-blur">
+              <div className="border-b border-slate-700/70 p-4">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="flex items-center gap-2 text-xl font-semibold text-white"><GitCompare className="h-5 w-5 text-purple-400" /> Comparison Results</h3>
+                    <div className="mt-2 flex flex-wrap gap-2 text-sm">
+                      <span className="rounded-full bg-slate-950/60 px-3 py-1">Total <strong>{stats.total}</strong></span>
+                      <span className="rounded-full bg-green-900/50 px-3 py-1 text-green-300">Added <strong>{stats.added}</strong></span>
+                      <span className="rounded-full bg-red-900/50 px-3 py-1 text-red-300">Removed <strong>{stats.removed}</strong></span>
+                      <span className="rounded-full bg-yellow-900/50 px-3 py-1 text-yellow-300">Modified <strong>{stats.modified}</strong></span>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button disabled={!comparison.length} onClick={() => focusDiff((activeDiffIndex - 1 + comparison.length) % comparison.length)} className="rounded bg-slate-700 px-3 py-2 text-sm text-white disabled:opacity-40"><ArrowLeft className="inline h-4 w-4" /> Prev</button>
+                    <button disabled={!comparison.length} onClick={() => focusDiff((activeDiffIndex + 1) % comparison.length)} className="rounded bg-slate-700 px-3 py-2 text-sm text-white disabled:opacity-40">Next <ArrowRight className="inline h-4 w-4" /></button>
+                    <button onClick={() => downloadText("json-diff.json", safeJsonStringify(comparison, 2))} className="rounded bg-purple-700 px-3 py-2 text-sm text-white"><Download className="inline h-4 w-4" /> Diff</button>
+                    <button onClick={() => downloadText("json-patch.json", safeJsonStringify(patch, 2))} className="rounded bg-purple-700 px-3 py-2 text-sm text-white"><Download className="inline h-4 w-4" /> Patch</button>
+                    <button onClick={() => copyToClipboard(safeJsonStringify(patch, 2), "patch")} className="rounded bg-slate-700 px-3 py-2 text-sm text-white">{copied === "patch" ? <Check className="inline h-4 w-4" /> : <Copy className="inline h-4 w-4" />} Patch</button>
+                  </div>
+                </div>
+                <div className="grid gap-3 md:grid-cols-[160px_1fr_1fr]">
+                  <div className="relative">
+                    <Filter className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-purple-400" />
+                    <select value={filterType} onChange={(event) => setFilterType(event.target.value)} className="w-full rounded border border-slate-700 bg-slate-950/60 py-2 pl-10 pr-3 text-sm text-white">
+                      <option value="all">All</option>
+                      <option value="added">Added</option>
+                      <option value="removed">Removed</option>
+                      <option value="modified">Modified</option>
+                    </select>
+                  </div>
+                  <input value={pathSearch} onChange={(event) => setPathSearch(event.target.value)} placeholder="Filter by path" className="rounded border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm text-white outline-none focus:border-purple-500" />
+                  <div className="flex rounded-lg bg-slate-950/60 p-1 text-sm">
+                    {["tree", "list", "detail"].map((tab) => (
+                      <button key={tab} onClick={() => setActiveResultTab(tab)} className={`flex-1 rounded px-3 py-1.5 capitalize ${activeResultTab === tab ? "bg-purple-600 text-white" : "text-slate-300 hover:bg-slate-800"}`}>{tab}</button>
                     ))}
                   </div>
                 </div>
+              </div>
+
+              {comparison.length === 0 ? (
+                <div className="p-8 text-center">
+                  <CheckCircle className="mx-auto mb-3 h-14 w-14 text-green-400" />
+                  <p className="text-xl font-semibold text-green-400">JSONs are identical.</p>
+                  <p className="mt-1 text-slate-400">The current settings found no differences.</p>
+                </div>
+              ) : activeResultTab === "tree" ? (
+                <div className="grid gap-px bg-slate-700/50 md:grid-cols-2">
+                  <div className="bg-slate-900/50 p-4">
+                    <JSONTree
+                      title="First JSON"
+                      data={parsedJson1}
+                      diffMap={diffMap}
+                      isLeft
+                      pinnedPath={pinnedPath1}
+                      hoveredPath={hoveredPath1}
+                      selectedPath={selectedDiffPath}
+                      searchTerm={searchTerm1}
+                      currentMatchIndex={currentMatchIndex1}
+                      searchMatches={searchMatches1}
+                      expandedPaths={expandedPaths1}
+                      globalExpandToggle={globalExpandToggle}
+                      globalExpandAction={globalExpandAction}
+                      onHover={setHoveredPath1}
+                      onPin={(path) => setPinnedPath1(pinnedPath1 === path ? "" : path)}
+                      onClearPin={() => setPinnedPath1("")}
+                      onExpandAll={() => { setGlobalExpandAction("expand"); setGlobalExpandToggle((value) => value + 1); }}
+                      onCollapseAll={() => { setGlobalExpandAction("collapse"); setGlobalExpandToggle((value) => value + 1); }}
+                      scrollRef={scrollRef1}
+                      onSearchChange={setSearchTerm1}
+                      onSearchKeyDown={(event) => { if (event.key === "Enter" && searchMatches1.length) setCurrentMatchIndex1((current) => (current + 1) % searchMatches1.length); }}
+                    />
+                  </div>
+                  <div className="bg-slate-900/50 p-4">
+                    <JSONTree
+                      title="Second JSON"
+                      data={parsedJson2}
+                      diffMap={diffMap}
+                      isLeft={false}
+                      pinnedPath={pinnedPath2}
+                      hoveredPath={hoveredPath2}
+                      selectedPath={selectedDiffPath}
+                      searchTerm={searchTerm2}
+                      currentMatchIndex={currentMatchIndex2}
+                      searchMatches={searchMatches2}
+                      expandedPaths={expandedPaths2}
+                      globalExpandToggle={globalExpandToggle}
+                      globalExpandAction={globalExpandAction}
+                      onHover={setHoveredPath2}
+                      onPin={(path) => setPinnedPath2(pinnedPath2 === path ? "" : path)}
+                      onClearPin={() => setPinnedPath2("")}
+                      onExpandAll={() => { setGlobalExpandAction("expand"); setGlobalExpandToggle((value) => value + 1); }}
+                      onCollapseAll={() => { setGlobalExpandAction("collapse"); setGlobalExpandToggle((value) => value + 1); }}
+                      scrollRef={scrollRef2}
+                      onSearchChange={setSearchTerm2}
+                      onSearchKeyDown={(event) => { if (event.key === "Enter" && searchMatches2.length) setCurrentMatchIndex2((current) => (current + 1) % searchMatches2.length); }}
+                    />
+                  </div>
+                </div>
+              ) : activeResultTab === "list" ? (
+                <div className="max-h-[720px] overflow-auto p-4">
+                  <div className="space-y-2">
+                    {filteredComparison.map((diff, index) => (
+                      <button key={`${diff.path}-${index}`} onClick={() => focusDiff(comparison.indexOf(diff))} className={`block w-full rounded-lg border p-3 text-left transition-colors ${selectedDiffPath === diff.path ? "border-purple-500 bg-purple-900/30" : "border-slate-700 bg-slate-900/50 hover:border-slate-500"}`}>
+                        <div className="mb-1 flex items-center gap-2">
+                          <span className={`rounded px-2 py-0.5 text-xs font-bold uppercase ${diff.type === "added" ? "bg-green-600/50 text-green-200" : diff.type === "removed" ? "bg-red-600/50 text-red-200" : "bg-yellow-600/50 text-yellow-200"}`}>{diff.type}</span>
+                          <code className="break-all text-xs text-purple-300">{diff.path}</code>
+                        </div>
+                        <div className="font-mono text-xs text-slate-300">{safeJsonStringify(diff.type === "modified" ? { old: diff.oldValue, next: diff.newValue } : diff.value, 0).slice(0, 180)}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="grid gap-4 p-4 lg:grid-cols-2">
+                  <div className="rounded-lg bg-slate-950/70 p-4">
+                    <h4 className="mb-2 font-semibold text-white">Selected Path</h4>
+                    <code className="break-all text-sm text-purple-300">{selectedDiffPath || "Select a difference"}</code>
+                    <pre className="mt-4 max-h-80 overflow-auto rounded bg-black/30 p-3 text-xs text-slate-200">{resultValue ? safeJsonStringify(resultValue, 2) : ""}</pre>
+                  </div>
+                  <div className="rounded-lg bg-slate-950/70 p-4">
+                    <h4 className="mb-2 font-semibold text-white">JSON Patch</h4>
+                    <pre className="max-h-96 overflow-auto rounded bg-black/30 p-3 text-xs text-slate-200">{safeJsonStringify(patch, 2)}</pre>
+                    <button disabled={!parsedJson1} onClick={() => downloadText("merged-output.json", safeJsonStringify(applyDiffToLeft(parsedJson1, comparison), 2))} className="mt-3 rounded bg-green-700 px-3 py-2 text-sm text-white disabled:opacity-40">Export merged output</button>
+                  </div>
+                </div>
               )}
             </div>
+          )}
+        </section>
 
-            {comparison.length === 0 ? (
-              <div className="bg-slate-800/50 backdrop-blur rounded-b-xl p-8 border border-purple-500/30 border-t-0 text-center">
-                <CheckCircle className="w-16 h-16 text-green-400 mx-auto mb-3" />
-                <p className="text-xl text-green-400 font-semibold">
-                  JSONs are identical!
-                </p>
-                <p className="text-purple-200 mt-2">No differences found</p>
-              </div>
-            ) : (
-              <div className="bg-slate-800/50 backdrop-blur rounded-b-xl border border-purple-500/30 border-t-0 overflow-hidden">
-                <div className="grid md:grid-cols-2 gap-4 bg-slate-900/30 p-4">
-                  <div>
-                    <div className="relative">
-                      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-purple-400 pointer-events-none" />
-                      <input
-                        type="text"
-                        placeholder="Search"
-                        value={searchTerm1}
-                        onChange={(e) => setSearchTerm1(e.target.value)}
-                        onKeyDown={handleSearchKeyDown1}
-                        className="w-full pl-10 pr-10 py-2 bg-slate-900/50 text-white rounded-lg border border-slate-700 focus:border-purple-500 focus:outline-none text-sm"
-                      />
-                      {searchTerm1 && (
-                        <button
-                          onClick={() => {
-                            setSearchTerm1("");
-                            setCurrentMatchIndex1(-1);
-                          }}
-                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition-colors"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      )}
-                    </div>
-                    {debouncedSearchTerm1 && (
-                      <div className="mt-2 text-xs text-yellow-400 flex items-center justify-between">
-                        <span>{searchMatches1.length} match(es)</span>
-                        {searchMatches1.length > 0 && (
-                          <span className="text-purple-300">
-                            {currentMatchIndex1 >= 0
-                              ? `${currentMatchIndex1 + 1}/${searchMatches1.length
-                              }`
-                              : "Press Enter →"}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  <div>
-                    <div className="relative">
-                      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-blue-400 pointer-events-none" />
-                      <input
-                        type="text"
-                        placeholder="Search"
-                        value={searchTerm2}
-                        onChange={(e) => setSearchTerm2(e.target.value)}
-                        onKeyDown={handleSearchKeyDown2}
-                        className="w-full pl-10 pr-10 py-2 bg-slate-900/50 text-white rounded-lg border border-slate-700 focus:border-blue-500 focus:outline-none text-sm"
-                      />
-                      {searchTerm2 && (
-                        <button
-                          onClick={() => {
-                            setSearchTerm2("");
-                            setCurrentMatchIndex2(-1);
-                          }}
-                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition-colors"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      )}
-                    </div>
-                    {debouncedSearchTerm2 && (
-                      <div className="mt-2 text-xs text-yellow-400 flex items-center justify-between">
-                        <span>{searchMatches2.length} match(es)</span>
-                        {searchMatches2.length > 0 && (
-                          <span className="text-purple-300">
-                            {currentMatchIndex2 >= 0
-                              ? `${currentMatchIndex2 + 1}/${searchMatches2.length
-                              }`
-                              : "Press Enter →"}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </div>
+        {history.length > 0 && (
+          <section className="mt-6 rounded-xl border border-slate-700 bg-slate-800/40 p-4">
+            <h3 className="mb-3 font-semibold text-white">Recent Comparisons</h3>
+            <div className="grid gap-2 md:grid-cols-4">
+              {history.map((entry) => (
+                <div key={entry.at} className="rounded-lg bg-slate-950/50 p-3 text-sm">
+                  <div className="truncate text-white">{entry.leftName} -> {entry.rightName}</div>
+                  <div className="mt-1 text-xs text-slate-400">{new Date(entry.at).toLocaleString()}</div>
+                  <div className="mt-2 text-xs text-slate-300">Total {entry.total}, +{entry.added}, -{entry.removed}, ~{entry.modified}</div>
                 </div>
-
-                <div className="grid md:grid-cols-2 gap-px bg-slate-700/30">
-                  <div className="bg-slate-900/50 p-4">
-                    <JSONTree
-                      data={parsedJson1}
-                      differences={comparison}
-                      isLeft={true}
-                      onPathHover={setHoveredPath1}
-                      currentPath={hoveredPath1}
-                      onPathPin={handlePinPath1}
-                      pinnedPath={pinnedPath1}
-                      onClearPath={() => setPinnedPath1("")}
-                      searchMatches={searchMatches1}
-                      searchTerm={debouncedSearchTerm1}
-                      currentMatchIndex={currentMatchIndex1}
-                      expandedPaths={expandedPaths1}
-                      scrollRef={scrollRef1}
-                      selectedPath={selectedDiffPath}
-                      globalExpandToggle={globalExpandToggle}
-                      globalExpandAction={globalExpandAction}
-                      onExpandAll={() => { setGlobalExpandAction("expand"); setGlobalExpandToggle(t => t + 1); }}
-                      onCollapseAll={() => { setGlobalExpandAction("collapse"); setGlobalExpandToggle(t => t + 1); }}
-                    />
-                  </div>
-
-                  <div className="bg-slate-900/50 p-4">
-                    <JSONTree
-                      data={parsedJson2}
-                      differences={comparison}
-                      isLeft={false}
-                      onPathHover={setHoveredPath2}
-                      currentPath={hoveredPath2}
-                      onPathPin={handlePinPath2}
-                      pinnedPath={pinnedPath2}
-                      onClearPath={() => setPinnedPath2("")}
-                      searchMatches={searchMatches2}
-                      searchTerm={debouncedSearchTerm2}
-                      currentMatchIndex={currentMatchIndex2}
-                      expandedPaths={expandedPaths2}
-                      scrollRef={scrollRef2}
-                      selectedPath={selectedDiffPath}
-                      globalExpandToggle={globalExpandToggle}
-                      globalExpandAction={globalExpandAction}
-                      onExpandAll={() => { setGlobalExpandAction("expand"); setGlobalExpandToggle(t => t + 1); }}
-                      onCollapseAll={() => { setGlobalExpandAction("collapse"); setGlobalExpandToggle(t => t + 1); }}
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+              ))}
+            </div>
+          </section>
         )}
-      </div>
-     </div>
+      </main>
     </div>
-   </div>
   );
 };
 
