@@ -2,7 +2,8 @@
 
 JSONEditor is a browser-local JSON workbench for editing, inspecting, transforming, validating, and comparing JSON documents. The current design is developer-focused: monospace UI, tree-first navigation, separate workspaces for editor/compare/query/schema, and guardrails for larger JSON payloads.
 
-Live app: https://jsoneditor.shubhamashish.xyz/
+<img width="1414" height="755" alt="image" src="https://github.com/user-attachments/assets/e05507c0-30a7-4b92-8192-facb7e29f752" />
+
 
 ## What It Does
 
