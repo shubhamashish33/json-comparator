@@ -166,7 +166,11 @@ The app has been optimized for larger JSON documents, including multi-MB payload
 Current guardrails:
 
 - JSON parsing is debounced to avoid parsing on every keystroke.
+- Parsing, tree indexing, search, and comparison run through a Web Worker so heavy work does not block the main UI thread.
+- Worker tasks expose progress state and can be cancelled from the toolbar while processing.
+- If worker processing fails or times out, parsing falls back to the browser thread instead of leaving the workspace blank.
 - Tree rendering is paged in chunks of 200 children.
+- Tree child collection avoids expanding every object key just to render the first visible page.
 - Text mode is capped to 5000 projected rows.
 - Table mode is capped to 1000 rows.
 - Search starts after 2 characters and caps at 500 matches.
@@ -177,9 +181,30 @@ Current guardrails:
 Important notes:
 
 - Full JSON parsing still happens in the browser.
+- The Web Worker improves responsiveness, but it does not remove the memory cost of holding parsed JSON in the browser.
 - Very large documents will still use memory proportional to parsed object size.
 - Browser-local comparison of very large nested documents can still be CPU-heavy.
-- The UI avoids rendering every node/diff at once, which is the main performance protection.
+- The UI avoids rendering every node/diff at once, and worker-backed processing keeps long parse/search/compare work away from React rendering.
+
+## Worker Architecture
+
+Large-document processing is split between the React UI and `src/jsonWorker.js`.
+
+Worker-backed tasks:
+
+- Parse JSON and return detailed errors.
+- Build a capped path/type/value index for Text mode.
+- Search keys and scalar values with a match cap.
+- Run semantic JSON comparison for Compare mode.
+
+Main-thread responsibilities:
+
+- Render the current workspace.
+- Keep Monaco Code mode interactive.
+- Apply explicit edit actions such as add, edit, remove, duplicate, clear values, format, compact, and sort.
+- Maintain small-document undo/redo history.
+
+This keeps the app responsive during common large-payload workflows while preserving the same editor behavior for structured actions.
 
 ## Persistence And Privacy
 
@@ -249,6 +274,7 @@ npm run build
 - React
 - React Router
 - Monaco Editor
+- Web Worker for parse/search/index/compare work
 - Lucide React
 - Tailwind via CDN in `public/index.html`
 - Vercel Analytics
@@ -261,6 +287,7 @@ npm run build
 - JSON Schema support is partial.
 - Transform uses a local `Function` constructor, so it should be treated as user-authored local code only.
 - Large JSON comparison can still be CPU-heavy because semantic comparison must traverse the parsed structures.
+- Undo/redo uses full snapshots only below the configured history size limit; very large documents should use explicit structured actions carefully.
 
 ## License
 
