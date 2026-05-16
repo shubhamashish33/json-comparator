@@ -5,6 +5,8 @@ import { useNavigate } from "react-router-dom";
 import {
   AlertCircle,
   ArrowLeftRight,
+  ArrowUp,
+  ArrowDown,
   ChevronDown,
   ChevronRight,
   Code2,
@@ -498,6 +500,7 @@ const JSONCompare = () => {
   const [fetchUrl, setFetchUrl] = useState("");
   const [comparison, setComparison] = useState([]);
   const [filterType, setFilterType] = useState("all");
+  const [activeDiffIndex, setActiveDiffIndex] = useState(0);
   const [copied, setCopied] = useState("");
   const [storageNotice, setStorageNotice] = useState("");
 
@@ -521,6 +524,8 @@ const JSONCompare = () => {
   }, [leftParsed.value, schemaParsed.error, schemaParsed.value, schemaText]);
   const filteredComparison = useMemo(() => comparison.filter((diff) => filterType === "all" || diff.type === filterType), [comparison, filterType]);
   const patch = useMemo(() => toJsonPatch(comparison), [comparison]);
+  const diffPathSet = useMemo(() => new Set(filteredComparison.map((diff) => diff.path)), [filteredComparison]);
+  const activeDiff = filteredComparison[activeDiffIndex] || null;
 
   useEffect(() => {
     try {
@@ -664,7 +669,10 @@ const JSONCompare = () => {
 
   const runCompare = () => {
     if (leftParsed.error || rightParsed.error || leftParsed.value === null || rightParsed.value === null) return;
-    setComparison(compareJSONValues(leftParsed.value, rightParsed.value, settings));
+    const diffs = compareJSONValues(leftParsed.value, rightParsed.value, settings);
+    setComparison(diffs);
+    setActiveDiffIndex(0);
+    if (diffs[0]?.path) setSelectedPath(diffs[0].path);
     setWorkspaceTab("compare");
   };
 
@@ -707,6 +715,17 @@ const JSONCompare = () => {
     setCopied(type);
     setTimeout(() => setCopied(""), 1200);
   };
+
+  const moveDiff = (direction) => {
+    if (!filteredComparison.length) return;
+    const nextIndex = (activeDiffIndex + direction + filteredComparison.length) % filteredComparison.length;
+    setActiveDiffIndex(nextIndex);
+    if (filteredComparison[nextIndex]?.path) setSelectedPath(filteredComparison[nextIndex].path);
+  };
+
+  useEffect(() => {
+    setActiveDiffIndex(0);
+  }, [filterType]);
 
   const modeButtons = [
     ["tree", "Tree", ListTree],
@@ -925,7 +944,18 @@ const JSONCompare = () => {
                 <h2 className="text-sm font-semibold text-white">Left JSON</h2>
                 <ToolbarButton onClick={() => leftFileRef.current?.click()}><Upload className="h-4 w-4" /></ToolbarButton>
               </div>
-              <Editor height="34rem" defaultLanguage="json" theme="vs-dark" value={leftText} onChange={(value) => setLeftText(value || "")} options={{ minimap: { enabled: false }, fontSize: 13, automaticLayout: true }} />
+              <div className="h-[34rem]">
+                {leftParsed.error ? <div className="p-3"><ErrorMessage error={leftParsed.error} /></div> : (
+                  <TreeView
+                    value={leftParsed.value}
+                    selectedPath={activeDiff?.path || selectedPath}
+                    selectedPaths={new Set()}
+                    matches={diffPathSet}
+                    onSelect={selectPath}
+                    onContextMenu={openContext}
+                  />
+                )}
+              </div>
             </div>
             <div className="border border-slate-800 bg-[#101419]">
               <div className="flex items-center justify-between border-b border-slate-800 p-3">
@@ -935,7 +965,18 @@ const JSONCompare = () => {
                   <ToolbarButton onClick={() => { setLeftText(rightText); setRightText(leftText); }}><ArrowLeftRight className="h-4 w-4" /></ToolbarButton>
                 </div>
               </div>
-              <Editor height="34rem" defaultLanguage="json" theme="vs-dark" value={rightText} onChange={(value) => setRightText(value || "")} options={{ minimap: { enabled: false }, fontSize: 13, automaticLayout: true }} />
+              <div className="h-[34rem]">
+                {rightParsed.error ? <div className="p-3"><ErrorMessage error={rightParsed.error} /></div> : (
+                  <TreeView
+                    value={rightParsed.value}
+                    selectedPath={activeDiff?.path || selectedPath}
+                    selectedPaths={new Set()}
+                    matches={diffPathSet}
+                    onSelect={selectPath}
+                    onContextMenu={openContext}
+                  />
+                )}
+              </div>
             </div>
             <div className="xl:col-span-2 border border-slate-800 bg-[#101419] p-3">
               <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -946,20 +987,41 @@ const JSONCompare = () => {
                   <option value="removed">Removed</option>
                   <option value="modified">Modified</option>
                 </select>
+                <ToolbarButton onClick={() => moveDiff(-1)} disabled={!filteredComparison.length}><ArrowUp className="h-4 w-4" />Prev</ToolbarButton>
+                <ToolbarButton onClick={() => moveDiff(1)} disabled={!filteredComparison.length}><ArrowDown className="h-4 w-4" />Next</ToolbarButton>
                 <ToolbarButton onClick={() => downloadText("json-patch.json", stringify(patch, 2))}>Patch</ToolbarButton>
                 <ToolbarButton onClick={() => leftParsed.value && downloadText("merged-output.json", stringify(applyDiffToLeft(leftParsed.value, comparison), 2))}>Merged</ToolbarButton>
               </div>
               {!comparison.length ? <div className="p-6 text-center text-sm text-slate-500">No differences yet, or the documents match.</div> : (
-                <div className="max-h-[28rem] overflow-auto">
-                  {filteredComparison.map((diff, index) => (
-                    <div key={`${diff.path}-${index}`} className="mb-2 border border-slate-800 bg-[#0c0f13] p-3 text-xs">
-                      <div className="mb-2 flex items-center gap-2">
-                        <span className={`px-2 py-1 uppercase ${diff.type === "added" ? "bg-emerald-950 text-emerald-200" : diff.type === "removed" ? "bg-red-950 text-red-200" : "bg-yellow-950 text-yellow-200"}`}>{diff.type}</span>
-                        <code className="text-cyan-300">{diff.path}</code>
-                      </div>
-                      <pre className="overflow-auto text-slate-300">{stringify(diff.type === "modified" ? { old: diff.oldValue, next: diff.newValue } : diff.value, 2)}</pre>
+                <div className="grid gap-3 xl:grid-cols-[320px_minmax(0,1fr)]">
+                  <div className="border border-slate-800 bg-[#0c0f13] p-3 text-xs">
+                    <div className="mb-2 text-slate-500">Difference</div>
+                    <div className="mb-3 text-lg text-white">{Math.min(activeDiffIndex + 1, filteredComparison.length)} / {filteredComparison.length}</div>
+                    <div className="space-y-2 text-slate-300">
+                      <div>Total: <span className="text-white">{comparison.length}</span></div>
+                      <div>Added: <span className="text-emerald-300">{comparison.filter((diff) => diff.type === "added").length}</span></div>
+                      <div>Removed: <span className="text-red-300">{comparison.filter((diff) => diff.type === "removed").length}</span></div>
+                      <div>Modified: <span className="text-yellow-300">{comparison.filter((diff) => diff.type === "modified").length}</span></div>
                     </div>
-                  ))}
+                  </div>
+                  {activeDiff && (
+                    <div className="border border-slate-800 bg-[#0c0f13] p-3 text-xs">
+                      <div className="mb-3 flex flex-wrap items-center gap-2">
+                        <span className={`px-2 py-1 uppercase ${activeDiff.type === "added" ? "bg-emerald-950 text-emerald-200" : activeDiff.type === "removed" ? "bg-red-950 text-red-200" : "bg-yellow-950 text-yellow-200"}`}>{activeDiff.type}</span>
+                        <code className="break-all text-cyan-300">{activeDiff.path}</code>
+                      </div>
+                      <div className="grid gap-3 lg:grid-cols-2">
+                        <div>
+                          <div className="mb-2 text-slate-500">Left</div>
+                          <pre className="max-h-64 overflow-auto border border-slate-800 bg-[#080a0d] p-3 text-slate-300">{stringify(activeDiff.type === "added" ? undefined : activeDiff.oldValue ?? activeDiff.value, 2)}</pre>
+                        </div>
+                        <div>
+                          <div className="mb-2 text-slate-500">Right</div>
+                          <pre className="max-h-64 overflow-auto border border-slate-800 bg-[#080a0d] p-3 text-slate-300">{stringify(activeDiff.type === "removed" ? undefined : activeDiff.newValue ?? activeDiff.value, 2)}</pre>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
