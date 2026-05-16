@@ -95,6 +95,8 @@ const TABLE_ROW_LIMIT = 1000;
 const TABLE_COLUMN_SAMPLE = 250;
 const SEARCH_RESULT_LIMIT = 500;
 const PARSE_DEBOUNCE_MS = 350;
+const STORAGE_TEXT_LIMIT = 750_000;
+const HISTORY_TEXT_LIMIT = 1_000_000;
 
 const useDebounce = (value, delay) => {
   const [debounced, setDebounced] = useState(value);
@@ -272,6 +274,32 @@ const downloadText = (name, text, type = "application/json") => {
   anchor.download = name;
   anchor.click();
   URL.revokeObjectURL(url);
+};
+
+const safeSetStorage = (key, value) => {
+  try {
+    if (!value || value.length > STORAGE_TEXT_LIMIT) {
+      localStorage.removeItem(key);
+      return false;
+    }
+    localStorage.setItem(key, value);
+    return true;
+  } catch {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // Ignore unavailable storage.
+    }
+    return false;
+  }
+};
+
+const safeSetStorageJSON = (key, value) => {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Settings are non-critical.
+  }
 };
 
 const ErrorMessage = ({ error }) => {
@@ -471,6 +499,7 @@ const JSONCompare = () => {
   const [comparison, setComparison] = useState([]);
   const [filterType, setFilterType] = useState("all");
   const [copied, setCopied] = useState("");
+  const [storageNotice, setStorageNotice] = useState("");
 
   const debouncedLeftText = useDebounce(leftText, PARSE_DEBOUNCE_MS);
   const debouncedRightText = useDebounce(rightText, PARSE_DEBOUNCE_MS);
@@ -505,12 +534,15 @@ const JSONCompare = () => {
   }, []);
 
   useEffect(() => {
-    if (leftText) localStorage.setItem(STORAGE_KEYS.left, leftText);
-    else localStorage.removeItem(STORAGE_KEYS.left);
-    if (rightText) localStorage.setItem(STORAGE_KEYS.right, rightText);
-    else localStorage.removeItem(STORAGE_KEYS.right);
-    localStorage.setItem(STORAGE_KEYS.schema, schemaText);
-    localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(settings));
+    const leftStored = safeSetStorage(STORAGE_KEYS.left, leftText);
+    const rightStored = safeSetStorage(STORAGE_KEYS.right, rightText);
+    safeSetStorage(STORAGE_KEYS.schema, schemaText);
+    safeSetStorageJSON(STORAGE_KEYS.settings, settings);
+    if ((leftText && !leftStored) || (rightText && !rightStored)) {
+      setStorageNotice("Large JSON is kept in memory only and will not be restored after refresh.");
+    } else {
+      setStorageNotice("");
+    }
   }, [leftText, rightText, schemaText, settings]);
 
   useEffect(() => {
@@ -524,7 +556,8 @@ const JSONCompare = () => {
   }, []);
 
   const commitValue = useCallback((nextValue) => {
-    setHistory((current) => [leftText, ...current].slice(0, 80));
+    if (leftText.length <= HISTORY_TEXT_LIMIT) setHistory((current) => [leftText, ...current].slice(0, 20));
+    else setHistory([]);
     setFuture([]);
     setLeftText(stringify(nextValue, 2));
   }, [leftText]);
@@ -532,7 +565,8 @@ const JSONCompare = () => {
   const undo = () => {
     const [previous, ...rest] = history;
     if (!previous) return;
-    setFuture((current) => [leftText, ...current]);
+    if (leftText.length <= HISTORY_TEXT_LIMIT) setFuture((current) => [leftText, ...current].slice(0, 20));
+    else setFuture([]);
     setLeftText(previous);
     setHistory(rest);
   };
@@ -540,7 +574,8 @@ const JSONCompare = () => {
   const redo = () => {
     const [next, ...rest] = future;
     if (!next) return;
-    setHistory((current) => [leftText, ...current]);
+    if (leftText.length <= HISTORY_TEXT_LIMIT) setHistory((current) => [leftText, ...current].slice(0, 20));
+    else setHistory([]);
     setLeftText(next);
     setFuture(rest);
   };
@@ -551,7 +586,8 @@ const JSONCompare = () => {
     const reader = new FileReader();
     reader.onload = (readerEvent) => {
       if (target === "left") {
-        setHistory((current) => [leftText, ...current].slice(0, 80));
+        if (leftText.length <= HISTORY_TEXT_LIMIT) setHistory((current) => [leftText, ...current].slice(0, 20));
+        else setHistory([]);
         setLeftText(String(readerEvent.target.result || ""));
       } else {
         setRightText(String(readerEvent.target.result || ""));
@@ -729,6 +765,11 @@ const JSONCompare = () => {
             <ToolbarButton onClick={() => removePaths(selectedPaths.size ? selectedPaths : new Set([selectedPath]))} disabled={!selectedPath && !selectedPaths.size}><Trash2 className="h-4 w-4" />Remove</ToolbarButton>
           </div>
         </div>
+        {storageNotice && (
+          <div className="mb-3 border border-yellow-900 bg-yellow-950/20 px-3 py-2 text-xs text-yellow-200">
+            {storageNotice}
+          </div>
+        )}
 
         {workspaceTab === "editor" && (
           <section className="grid min-h-[calc(100vh-13rem)] gap-3 xl:grid-cols-[260px_minmax(0,1fr)]">
