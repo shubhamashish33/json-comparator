@@ -412,7 +412,10 @@ const JSONCompare = () => {
   const schemaParsed = useMemo(() => parseJSONDetailed(schemaText), [schemaText]);
   const matches = useMemo(() => new Set(searchTerm && leftParsed.value ? searchInObject(leftParsed.value, searchTerm).map((match) => match.path) : []), [leftParsed.value, searchTerm]);
   const flattened = useMemo(() => leftParsed.value === null ? [] : flattenRows(leftParsed.value), [leftParsed.value]);
-  const table = useMemo(() => collectTable(leftParsed.value), [leftParsed.value]);
+  const selectedValue = useMemo(() => selectedPath ? getValueAtPath(leftParsed.value, selectedPath) : leftParsed.value, [leftParsed.value, selectedPath]);
+  const selectedTable = useMemo(() => collectTable(selectedValue), [selectedValue]);
+  const rootTable = useMemo(() => collectTable(leftParsed.value), [leftParsed.value]);
+  const table = selectedTable.rows.length ? { ...selectedTable, path: selectedPath } : { ...rootTable, path: "" };
   const schemaErrors = useMemo(() => {
     if (!leftParsed.value || !schemaText.trim() || schemaParsed.error) return [];
     return validateAgainstSchema(leftParsed.value, schemaParsed.value);
@@ -721,34 +724,42 @@ const JSONCompare = () => {
               {editorMode === "table" && (
                 <div className="h-[calc(100vh-14rem)] overflow-auto p-3">
                   {table.rows.length ? (
-                    <table className="w-full text-left text-xs">
-                      <thead className="sticky top-0 bg-[#101419] text-slate-500">
-                        <tr><th className="border-b border-slate-800 py-2">#</th>{table.columns.map((column) => <th key={column} className="border-b border-slate-800 px-2 py-2">{column}</th>)}</tr>
-                      </thead>
-                      <tbody>
-                        {table.rows.map((row, index) => (
-                          <tr key={index} className="hover:bg-slate-900">
-                            <td className="border-b border-slate-900 py-2 text-slate-500">{index}</td>
-                            {table.columns.map((column) => {
-                              const cellPath = `[${index}].${column}`;
-                              return (
-                                <td
-                                  key={column}
-                                  onClick={(event) => selectPath(cellPath, event)}
-                                  onDoubleClick={() => editNode(cellPath)}
-                                  onContextMenu={(event) => openContext(cellPath, event)}
-                                  className="cursor-default border-b border-slate-900 px-2 py-2 text-slate-300"
-                                >
-                                  {stringify(row[column], 0)}
-                                </td>
-                              );
-                            })}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                    <>
+                      <div className="mb-3 border border-slate-800 bg-[#0b0d10] px-3 py-2 text-xs text-slate-400">
+                        Table source: <code className="text-cyan-300">{table.path || "root"}</code>
+                      </div>
+                      <table className="w-full text-left text-xs">
+                        <thead className="sticky top-0 bg-[#101419] text-slate-500">
+                          <tr><th className="border-b border-slate-800 py-2">#</th>{table.columns.map((column) => <th key={column} className="border-b border-slate-800 px-2 py-2">{column}</th>)}</tr>
+                        </thead>
+                        <tbody>
+                          {table.rows.map((row, index) => (
+                            <tr key={index} className="hover:bg-slate-900">
+                              <td className="border-b border-slate-900 py-2 text-slate-500">{index}</td>
+                              {table.columns.map((column) => {
+                                const rowPath = table.path ? `${table.path}[${index}]` : `[${index}]`;
+                                const cellPath = `${rowPath}.${column}`;
+                                return (
+                                  <td
+                                    key={column}
+                                    onClick={(event) => selectPath(cellPath, event)}
+                                    onDoubleClick={() => editNode(cellPath)}
+                                    onContextMenu={(event) => openContext(cellPath, event)}
+                                    className="cursor-default border-b border-slate-900 px-2 py-2 text-slate-300"
+                                  >
+                                    {stringify(row[column], 0)}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </>
                   ) : (
-                    <div className="p-8 text-center text-sm text-slate-500">Table mode works with top-level arrays of objects.</div>
+                    <div className="p-8 text-center text-sm text-slate-500">
+                      Select an array of objects in Tree mode, then open Table mode. Top-level arrays of objects also render automatically.
+                    </div>
                   )}
                 </div>
               )}
