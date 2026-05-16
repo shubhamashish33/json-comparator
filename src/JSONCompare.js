@@ -12,6 +12,7 @@ import {
   Code2,
   Copy,
   Download,
+  Eraser,
   FileJson,
   GitCompare,
   Home,
@@ -175,6 +176,25 @@ const removeAtPath = (source, path) => {
   if (!parent || last === undefined) return next;
   if (Array.isArray(parent)) parent.splice(Number(last), 1);
   else delete parent[last];
+  return next;
+};
+
+const emptyValueFor = (value) => {
+  if (Array.isArray(value)) return [];
+  if (value && typeof value === "object") return {};
+  if (typeof value === "string") return "";
+  return null;
+};
+
+const clearValuesAtPaths = (source, paths) => {
+  const next = clone(source);
+  [...paths].filter(Boolean).forEach((path) => {
+    const parts = parsePath(path);
+    const last = parts.pop();
+    const parent = parts.reduce((cursor, part) => cursor?.[part], next);
+    if (!parent || last === undefined || !(last in parent)) return;
+    parent[last] = emptyValueFor(parent[last]);
+  });
   return next;
 };
 
@@ -658,6 +678,14 @@ const JSONCompare = () => {
     setContextMenu(null);
   };
 
+  const clearSelectedValues = (paths) => {
+    const targetPaths = new Set([...paths].filter(Boolean));
+    if (leftParsed.error || !targetPaths.size) return;
+    commitValue(clearValuesAtPaths(leftParsed.value, targetPaths));
+    setSelectedPaths(targetPaths);
+    setContextMenu(null);
+  };
+
   const saveDialog = ({ key, value, parentPath }) => {
     if (dialog.mode === "add") {
       commitValue(addAtPath(leftParsed.value || {}, parentPath, key, value));
@@ -815,6 +843,7 @@ const JSONCompare = () => {
           <div className="flex gap-2">
             <ToolbarButton onClick={() => addNode(selectedPath)}><Plus className="h-4 w-4" />Add</ToolbarButton>
             <ToolbarButton onClick={() => editNode(selectedPath)} disabled={leftParsed.error || leftParsed.value === null}>Edit</ToolbarButton>
+            <ToolbarButton onClick={() => clearSelectedValues(selectedPaths.size ? selectedPaths : new Set([selectedPath]))} disabled={!selectedPath && !selectedPaths.size}><Eraser className="h-4 w-4" />Clear values</ToolbarButton>
             <ToolbarButton onClick={() => removePaths(selectedPaths.size ? selectedPaths : new Set([selectedPath]))} disabled={!selectedPath && !selectedPaths.size}><Trash2 className="h-4 w-4" />Remove</ToolbarButton>
           </div>
         </div>
@@ -1070,6 +1099,7 @@ const JSONCompare = () => {
           <button onClick={() => { commitValue(duplicateAtPath(leftParsed.value, contextMenu.path)); setContextMenu(null); }} className="block w-full px-3 py-2 text-left text-slate-200 hover:bg-slate-800">Duplicate node</button>
           <button onClick={() => copyText(contextMenu.path || "root", "path")} className="block w-full px-3 py-2 text-left text-slate-200 hover:bg-slate-800">{copied === "path" ? "Copied path" : "Copy path"}</button>
           <button onClick={() => copyText(stringify(getValueAtPath(leftParsed.value, contextMenu.path), 2), "value")} className="block w-full px-3 py-2 text-left text-slate-200 hover:bg-slate-800">{copied === "value" ? "Copied value" : "Copy value"}</button>
+          <button onClick={() => clearSelectedValues(selectedPaths.size ? selectedPaths : new Set([contextMenu.path]))} className="block w-full px-3 py-2 text-left text-yellow-100 hover:bg-yellow-950/40">Clear selected values</button>
           <button onClick={() => removePaths(selectedPaths.size ? selectedPaths : new Set([contextMenu.path]))} className="block w-full px-3 py-2 text-left text-red-200 hover:bg-red-950/50">Remove selected</button>
         </div>
       )}
