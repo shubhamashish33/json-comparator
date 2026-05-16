@@ -8,11 +8,10 @@ export const formatPath = (base, key) => {
 export const getPathParents = (path) => {
   const parents = [];
   let current = "";
-  path.split(/\.|\[/).filter(Boolean).forEach((part, index) => {
-    const clean = part.replace("]", "");
-    if (index === 0) current = clean;
-    else if (/^\d+$/.test(clean)) current += `[${clean}]`;
-    else current += `.${clean}`;
+  (path.match(/[^.[\]]+/g) || []).forEach((part, index) => {
+    if (index === 0) current = part;
+    else if (/^\d+$/.test(part)) current += `[${part}]`;
+    else current += `.${part}`;
     parents.push(current);
   });
   return parents;
@@ -64,7 +63,23 @@ export const repairJSONish = (text) => {
 
   repaired = repaired.replace(/([{,]\s*)([A-Za-z_$][\w$-]*)(\s*:)/g, '$1"$2"$3');
   repaired = repaired.replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/g, (_, value) => {
-    return `"${value.replace(/"/g, '\\"')}"`;
+    const normalized = value
+      .replace(/\\u([0-9a-fA-F]{4})/g, (_, code) => String.fromCharCode(parseInt(code, 16)))
+      .replace(/\\(['"\\/bfnrt])/g, (_, escaped) => {
+        const escapes = {
+          "'": "'",
+          '"': '"',
+          "\\": "\\",
+          "/": "/",
+          b: "\b",
+          f: "\f",
+          n: "\n",
+          r: "\r",
+          t: "\t",
+        };
+        return escapes[escaped];
+      });
+    return JSON.stringify(normalized);
   });
 
   return repaired;
