@@ -222,6 +222,9 @@ const TreeNode = memo(
     globalExpandAction,
     onHover,
     onPin,
+    onSelectNode,
+    onContextNode,
+    selectedPaths = new Set(),
   }) => {
     const nodeRef = useRef(null);
     const [isExpanded, setIsExpanded] = useState(level < 2);
@@ -238,7 +241,7 @@ const TreeNode = memo(
             ? "modified"
             : null;
     const isPinned = pinnedPath === path;
-    const isSelected = selectedPath === path;
+    const isSelected = selectedPath === path || selectedPaths.has(path);
     const isCurrentMatch = searchMatches[currentMatchIndex]?.path === path;
     const isMatch = searchMatches.some((match) => match.path === path);
 
@@ -297,9 +300,13 @@ const TreeNode = memo(
           data-path={path}
           onMouseEnter={() => onHover(path)}
           onMouseLeave={() => !isPinned && onHover("")}
-          onClick={() => hasChildren && setIsExpanded((current) => !current)}
+          onClick={(event) => {
+            onSelectNode?.(path, event);
+            if (hasChildren) setIsExpanded((current) => !current);
+          }}
+          onContextMenu={(event) => onContextNode?.(path, event)}
           className={`group flex min-h-8 items-center gap-1 rounded px-2 py-1 transition-colors hover:bg-slate-700/40 ${rowTone} ${
-            isSelected ? "ring-2 ring-purple-500" : isCurrentMatch ? "ring-2 ring-yellow-400" : isPinned ? "ring-1 ring-purple-500/70" : isMatch ? "ring-1 ring-yellow-500/40" : ""
+            isSelected ? "bg-cyan-500/15 ring-1 ring-cyan-500" : isCurrentMatch ? "ring-2 ring-yellow-400" : isPinned ? "ring-1 ring-purple-500/70" : isMatch ? "ring-1 ring-yellow-500/40" : ""
           }`}
           style={{ paddingLeft: `${level * 18 + 8}px` }}
         >
@@ -345,6 +352,9 @@ const TreeNode = memo(
                 globalExpandAction={globalExpandAction}
                 onHover={onHover}
                 onPin={onPin}
+                onSelectNode={onSelectNode}
+                onContextNode={onContextNode}
+                selectedPaths={selectedPaths}
               />
             ))}
           </div>
@@ -379,6 +389,9 @@ const JSONTree = memo(
     scrollRef,
     onSearchChange,
     onSearchKeyDown,
+    onSelectNode,
+    onContextNode,
+    selectedPaths,
   }) => {
     if (data === null || data === undefined) {
       return <div className="rounded-lg bg-slate-900/70 p-6 text-center text-slate-500">No parsed JSON yet</div>;
@@ -456,6 +469,9 @@ const JSONTree = memo(
               globalExpandAction={globalExpandAction}
               onHover={onHover}
               onPin={onPin}
+              onSelectNode={onSelectNode}
+              onContextNode={onContextNode}
+              selectedPaths={selectedPaths}
             />
           ))}
         </div>
@@ -633,6 +649,9 @@ const JSONCompare = () => {
   const [keyPath, setKeyPath] = useState("");
   const [keyValue, setKeyValue] = useState("");
   const [keyValueType, setKeyValueType] = useState("json");
+  const [editorSelectedPath, setEditorSelectedPath] = useState("");
+  const [editorSelectedPaths, setEditorSelectedPaths] = useState(new Set());
+  const [treeContextMenu, setTreeContextMenu] = useState(null);
 
   const editor1Ref = useRef(null);
   const editor2Ref = useRef(null);
@@ -763,16 +782,87 @@ const JSONCompare = () => {
     }
   }, [json1, keyPath, keyValue, keyValueType]);
 
-  const removeKeyEdit = useCallback(() => {
+  const removeKeyEdit = useCallback((overridePath) => {
+    const targetPath = overridePath || keyPath;
     const parsed = parseJSONDetailed(json1 || "{}");
     setError1(parsed.error);
     if (parsed.error) return;
 
-    const nextJson = removeValueAtJsonPath(parsed.value || {}, keyPath);
+    const nextJson = removeValueAtJsonPath(parsed.value || {}, targetPath);
     setJson1(safeJsonStringify(nextJson, 2));
     setParsedJson1(nextJson);
     setError1(null);
-  }, [json1, keyPath]);
+    setEditorSelectedPaths((current) => {
+      const next = new Set(current);
+      next.delete(targetPath);
+      return next;
+    });
+    if (editorSelectedPath === targetPath) setEditorSelectedPath("");
+    if (keyPath === targetPath) setKeyPath("");
+  }, [editorSelectedPath, json1, keyPath]);
+
+  const removeEditorPaths = useCallback((paths) => {
+    const parsed = parseJSONDetailed(json1 || "{}");
+    setError1(parsed.error);
+    if (parsed.error) return;
+
+    const nextJson = [...paths]
+      .sort((left, right) => right.length - left.length)
+      .reduce((current, path) => removeValueAtJsonPath(current, path), parsed.value || {});
+    setJson1(safeJsonStringify(nextJson, 2));
+    setParsedJson1(nextJson);
+    setError1(null);
+    setEditorSelectedPath("");
+    setEditorSelectedPaths(new Set());
+    setTreeContextMenu(null);
+  }, [json1]);
+
+  const setEditorValueFromPath = useCallback((path) => {
+    const value = getValueAtPath(editorParsed.value, path);
+    setKeyPath(path);
+    if (value === null) {
+      setKeyValueType("null");
+      setKeyValue("");
+    } else if (typeof value === "string") {
+      setKeyValueType("string");
+      setKeyValue(value);
+    } else if (typeof value === "number") {
+      setKeyValueType("number");
+      setKeyValue(String(value));
+    } else if (typeof value === "boolean") {
+      setKeyValueType("boolean");
+      setKeyValue(String(value));
+    } else {
+      setKeyValueType("json");
+      setKeyValue(safeJsonStringify(value, 2));
+    }
+    setTreeContextMenu(null);
+  }, [editorParsed.value]);
+
+  const selectEditorTreePath = useCallback((path, event) => {
+    setEditorSelectedPath(path);
+    setKeyPath(path);
+    setPinnedPath1(path);
+    setTreeContextMenu(null);
+    setEditorSelectedPaths((current) => {
+      if (event?.ctrlKey || event?.metaKey || event?.shiftKey) {
+        const next = new Set(current);
+        if (next.has(path)) next.delete(path);
+        else next.add(path);
+        return next;
+      }
+      return new Set([path]);
+    });
+  }, []);
+
+  const openTreeContextMenu = useCallback((path, event) => {
+    event.preventDefault();
+    setEditorSelectedPath(path);
+    setKeyPath(path);
+    setPinnedPath1(path);
+    setEditorSelectedPaths((current) => current.has(path) ? current : new Set([path]));
+    setTreeContextMenu({ path, x: event.clientX, y: event.clientY });
+  }, []);
 
   const focusDiff = useCallback((index) => {
     const diff = comparison[index];
@@ -815,6 +905,16 @@ const JSONCompare = () => {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [activeDiffIndex, compare, comparison.length, focusDiff]);
+
+  useEffect(() => {
+    const closeContextMenu = () => setTreeContextMenu(null);
+    window.addEventListener("click", closeContextMenu);
+    window.addEventListener("keydown", closeContextMenu);
+    return () => {
+      window.removeEventListener("click", closeContextMenu);
+      window.removeEventListener("keydown", closeContextMenu);
+    };
+  }, []);
 
   const copyToClipboard = useCallback((text, type) => {
     navigator.clipboard.writeText(text).then(() => {
@@ -1105,6 +1205,13 @@ const JSONCompare = () => {
 
         {activeWorkspaceTab === "editor" && (
           <section className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_380px]">
+            <div className="xl:col-span-2 border border-slate-800 bg-[#101419] px-3 py-2 text-xs">
+              <span className="text-slate-500">path</span>
+              <code className="ml-3 break-all text-cyan-300">{editorSelectedPath || "Select a key in the tree"}</code>
+              {editorSelectedPaths.size > 1 && (
+                <span className="ml-3 text-slate-400">{editorSelectedPaths.size} selected</span>
+              )}
+            </div>
             <EditorPanel
               side="left"
               title="JSON editor"
@@ -1181,7 +1288,7 @@ const JSONCompare = () => {
               <div className="border border-slate-800 bg-[#101419] p-4">
                 <div className="mb-3 flex items-center justify-between">
                   <h2 className="text-sm font-semibold text-white">Parsed tree</h2>
-                  <span className={`text-xs ${editorParsed.error ? "text-red-300" : "text-emerald-300"}`}>{editorParsed.error ? "invalid" : "valid"}</span>
+                  <span className={`text-xs ${editorParsed.error ? "text-red-300" : "text-emerald-300"}`}>{editorParsed.error ? "invalid" : `${editorSelectedPaths.size} selected`}</span>
                 </div>
                 {editorParsed.error ? (
                   <ErrorMessage error={editorParsed.error} />
@@ -1193,7 +1300,7 @@ const JSONCompare = () => {
                     isLeft
                     pinnedPath={pinnedPath1}
                     hoveredPath={hoveredPath1}
-                    selectedPath=""
+                    selectedPath={editorSelectedPath}
                     searchTerm={searchTerm1}
                     currentMatchIndex={currentMatchIndex1}
                     searchMatches={searchMatches1}
@@ -1208,11 +1315,70 @@ const JSONCompare = () => {
                     scrollRef={scrollRef1}
                     onSearchChange={setSearchTerm1}
                     onSearchKeyDown={(event) => { if (event.key === "Enter" && searchMatches1.length) setCurrentMatchIndex1((current) => (current + 1) % searchMatches1.length); }}
+                    onSelectNode={selectEditorTreePath}
+                    onContextNode={openTreeContextMenu}
+                    selectedPaths={editorSelectedPaths}
                   />
                 )}
               </div>
             </aside>
           </section>
+        )}
+
+        {activeWorkspaceTab === "editor" && treeContextMenu && (
+          <div
+            className="fixed z-[60] w-52 border border-slate-700 bg-[#101419] p-1 text-xs shadow-2xl shadow-black/40"
+            style={{ left: treeContextMenu.x, top: treeContextMenu.y }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              onClick={() => {
+                setEditorSelectedPath(treeContextMenu.path);
+                setEditorSelectedPaths(new Set([treeContextMenu.path]));
+                setKeyPath(treeContextMenu.path);
+                setTreeContextMenu(null);
+              }}
+              className="block w-full px-3 py-2 text-left text-slate-200 hover:bg-slate-800"
+            >
+              Select only this key
+            </button>
+            <button
+              onClick={() => {
+                setEditorSelectedPaths((current) => {
+                  const next = new Set(current);
+                  if (next.has(treeContextMenu.path)) next.delete(treeContextMenu.path);
+                  else next.add(treeContextMenu.path);
+                  return next;
+                });
+                setTreeContextMenu(null);
+              }}
+              className="block w-full px-3 py-2 text-left text-slate-200 hover:bg-slate-800"
+            >
+              Toggle multi-select
+            </button>
+            <button
+              onClick={() => setEditorValueFromPath(treeContextMenu.path)}
+              className="block w-full px-3 py-2 text-left text-slate-200 hover:bg-slate-800"
+            >
+              Edit this key
+            </button>
+            <button
+              onClick={() => {
+                removeKeyEdit(treeContextMenu.path);
+                setTreeContextMenu(null);
+              }}
+              className="block w-full px-3 py-2 text-left text-red-200 hover:bg-red-950/50"
+            >
+              Remove this key
+            </button>
+            <button
+              disabled={!editorSelectedPaths.size}
+              onClick={() => removeEditorPaths(editorSelectedPaths)}
+              className="block w-full px-3 py-2 text-left text-red-200 hover:bg-red-950/50 disabled:text-slate-600 disabled:hover:bg-transparent"
+            >
+              Remove selected keys
+            </button>
+          </div>
         )}
 
         {activeWorkspaceTab === "compare" && (
