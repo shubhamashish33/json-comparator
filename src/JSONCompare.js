@@ -31,7 +31,6 @@ import {
   getValueAtPath,
   parseJSONDetailed,
   repairJSONish,
-  searchInObject,
   toJsonPatch,
   validateAgainstSchema,
 } from "./jsonUtils";
@@ -88,6 +87,22 @@ const sampleRight = {
     requestId: "abc-2",
     updatedAt: "2026-01-01T10:00:01Z",
   },
+};
+
+const TREE_PAGE_SIZE = 200;
+const TEXT_ROW_LIMIT = 5000;
+const TABLE_ROW_LIMIT = 1000;
+const TABLE_COLUMN_SAMPLE = 250;
+const SEARCH_RESULT_LIMIT = 500;
+const PARSE_DEBOUNCE_MS = 350;
+
+const useDebounce = (value, delay) => {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(timer);
+  }, [delay, value]);
+  return debounced;
 };
 
 const stringify = (value, spacing = 2) => {
@@ -196,12 +211,16 @@ const valueType = (value) => {
   return typeof value;
 };
 
-const flattenRows = (value, path = "") => {
+const flattenRows = (value, path = "", limit = TEXT_ROW_LIMIT) => {
   const rows = [];
   const visit = (node, currentPath) => {
+    if (rows.length >= limit) return;
     rows.push({ path: currentPath || "root", type: valueType(node), value: node });
     if (node && typeof node === "object") {
-      Object.entries(node).forEach(([key, child]) => {
+      const entries = Array.isArray(node)
+        ? Array.from({ length: Math.min(node.length, limit - rows.length) }, (_, index) => [index, node[index]])
+        : Object.keys(node).slice(0, Math.max(0, limit - rows.length)).map((key) => [key, node[key]]);
+      entries.forEach(([key, child]) => {
         visit(child, formatPath(currentPath, key, Array.isArray(node)));
       });
     }
@@ -212,9 +231,37 @@ const flattenRows = (value, path = "") => {
 
 const collectTable = (value) => {
   if (!Array.isArray(value)) return { rows: [], columns: [] };
-  const objectRows = value.filter((row) => row && typeof row === "object" && !Array.isArray(row));
-  const columns = Array.from(new Set(objectRows.flatMap((row) => Object.keys(row))));
-  return { rows: objectRows, columns };
+  const rows = [];
+  const columns = new Set();
+  for (let index = 0; index < value.length && rows.length < TABLE_ROW_LIMIT; index += 1) {
+    const row = value[index];
+    if (!row || typeof row !== "object" || Array.isArray(row)) continue;
+    rows.push({ row, sourceIndex: index });
+    if (rows.length <= TABLE_COLUMN_SAMPLE) Object.keys(row).forEach((key) => columns.add(key));
+  }
+  return { rows, columns: Array.from(columns), total: value.length, truncated: value.length > rows.length };
+};
+
+const limitedSearch = (value, term, limit = SEARCH_RESULT_LIMIT) => {
+  if (!term || term.length < 2) return [];
+  const lower = term.toLowerCase();
+  const matches = [];
+  const visit = (node, path) => {
+    if (matches.length >= limit || node === null || node === undefined) return;
+    if (typeof node !== "object") {
+      if (String(node).toLowerCase().includes(lower)) matches.push(path || "root");
+      return;
+    }
+    const keys = Array.isArray(node) ? Array.from({ length: node.length }, (_, index) => index) : Object.keys(node);
+    for (const key of keys) {
+      if (matches.length >= limit) break;
+      const nextPath = formatPath(path, key, Array.isArray(node));
+      if (String(key).toLowerCase().includes(lower)) matches.push(nextPath);
+      visit(node[key], nextPath);
+    }
+  };
+  visit(value, "");
+  return matches;
 };
 
 const downloadText = (name, text, type = "application/json") => {
@@ -262,13 +309,19 @@ const TreeNode = ({
   onContextMenu,
 }) => {
   const [open, setOpen] = useState(level < 2);
+  const [visibleCount, setVisibleCount] = useState(TREE_PAGE_SIZE);
   const isContainer = value && typeof value === "object";
   const isArray = Array.isArray(value);
   const selected = selectedPath === path || selectedPaths.has(path);
   const matched = matches.has(path);
-  const entries = isContainer ? Object.entries(value) : [];
+  const childCount = isContainer ? isArray ? value.length : Object.keys(value).length : 0;
+  const entries = isContainer
+    ? isArray
+      ? Array.from({ length: Math.min(value.length, visibleCount) }, (_, index) => [index, value[index]])
+      : Object.keys(value).slice(0, visibleCount).map((key) => [key, value[key]])
+    : [];
   const preview = isContainer
-    ? isArray ? `[${open ? "" : `${value.length} items`}]` : `{${open ? "" : `${entries.length} keys`}}`
+    ? isArray ? `[${open ? "" : `${value.length} items`}]` : `{${open ? "" : `${childCount} keys`}}`
     : stringify(value, 0);
 
   return (
@@ -306,6 +359,18 @@ const TreeNode = ({
           onContextMenu={onContextMenu}
         />
       ))}
+      {isContainer && open && childCount > visibleCount && (
+        <button
+          onClick={(event) => {
+            event.stopPropagation();
+            setVisibleCount((current) => current + TREE_PAGE_SIZE);
+          }}
+          className="ml-8 mt-1 border border-slate-800 bg-[#101419] px-3 py-1.5 text-xs text-cyan-300 hover:bg-slate-900"
+          style={{ marginLeft: `${(level + 1) * 16 + 8}px` }}
+        >
+          Show next {Math.min(TREE_PAGE_SIZE, childCount - visibleCount)} of {childCount}
+        </button>
+      )}
     </div>
   );
 };
@@ -407,10 +472,15 @@ const JSONCompare = () => {
   const [filterType, setFilterType] = useState("all");
   const [copied, setCopied] = useState("");
 
-  const leftParsed = useMemo(() => parseJSONDetailed(leftText), [leftText]);
-  const rightParsed = useMemo(() => parseJSONDetailed(rightText), [rightText]);
-  const schemaParsed = useMemo(() => parseJSONDetailed(schemaText), [schemaText]);
-  const matches = useMemo(() => new Set(searchTerm && leftParsed.value ? searchInObject(leftParsed.value, searchTerm).map((match) => match.path) : []), [leftParsed.value, searchTerm]);
+  const debouncedLeftText = useDebounce(leftText, PARSE_DEBOUNCE_MS);
+  const debouncedRightText = useDebounce(rightText, PARSE_DEBOUNCE_MS);
+  const debouncedSchemaText = useDebounce(schemaText, PARSE_DEBOUNCE_MS);
+  const debouncedSearchTerm = useDebounce(searchTerm, 250);
+  const leftParsed = useMemo(() => parseJSONDetailed(debouncedLeftText), [debouncedLeftText]);
+  const rightParsed = useMemo(() => parseJSONDetailed(debouncedRightText), [debouncedRightText]);
+  const schemaParsed = useMemo(() => parseJSONDetailed(debouncedSchemaText), [debouncedSchemaText]);
+  const isParsingPending = leftText !== debouncedLeftText || rightText !== debouncedRightText || schemaText !== debouncedSchemaText;
+  const matches = useMemo(() => new Set(leftParsed.value ? limitedSearch(leftParsed.value, debouncedSearchTerm) : []), [debouncedSearchTerm, leftParsed.value]);
   const flattened = useMemo(() => leftParsed.value === null ? [] : flattenRows(leftParsed.value), [leftParsed.value]);
   const selectedValue = useMemo(() => selectedPath ? getValueAtPath(leftParsed.value, selectedPath) : leftParsed.value, [leftParsed.value, selectedPath]);
   const selectedTable = useMemo(() => collectTable(selectedValue), [selectedValue]);
@@ -676,9 +746,12 @@ const JSONCompare = () => {
                 <input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Search tree" className="w-full border border-slate-700 bg-[#0b0d10] py-2 pl-9 pr-3 text-xs text-white outline-none focus:border-cyan-500" />
               </div>
               <div className="space-y-2 text-xs text-slate-400">
+                {isParsingPending && <div className="border border-cyan-900 p-2 text-cyan-200">Parsing after input settles...</div>}
                 <div className="border border-slate-800 p-2">Click selects and shows path. Ctrl/Cmd/Shift click toggles multi-select.</div>
                 <div className="border border-slate-800 p-2">Right-click any node for add, edit, duplicate, copy, and remove actions.</div>
-                <div className={`border p-2 ${leftParsed.error ? "border-red-900 text-red-200" : "border-emerald-900 text-emerald-200"}`}>{leftParsed.error ? "Invalid JSON" : `${flattened.length} nodes`}</div>
+                <div className={`border p-2 ${leftParsed.error ? "border-red-900 text-red-200" : "border-emerald-900 text-emerald-200"}`}>{leftParsed.error ? "Invalid JSON" : `${flattened.length}${flattened.length >= TEXT_ROW_LIMIT ? "+" : ""} projected nodes`}</div>
+                {debouncedSearchTerm.length === 1 && <div className="border border-yellow-900 p-2 text-yellow-200">Search starts after 2 characters.</div>}
+                {matches.size >= SEARCH_RESULT_LIMIT && <div className="border border-yellow-900 p-2 text-yellow-200">Showing first {SEARCH_RESULT_LIMIT} search matches.</div>}
               </div>
             </aside>
 
@@ -727,17 +800,18 @@ const JSONCompare = () => {
                     <>
                       <div className="mb-3 border border-slate-800 bg-[#0b0d10] px-3 py-2 text-xs text-slate-400">
                         Table source: <code className="text-cyan-300">{table.path || "root"}</code>
+                        {table.truncated && <span className="ml-3 text-yellow-300">Showing first {table.rows.length} object rows from {table.total} items.</span>}
                       </div>
                       <table className="w-full text-left text-xs">
                         <thead className="sticky top-0 bg-[#101419] text-slate-500">
                           <tr><th className="border-b border-slate-800 py-2">#</th>{table.columns.map((column) => <th key={column} className="border-b border-slate-800 px-2 py-2">{column}</th>)}</tr>
                         </thead>
                         <tbody>
-                          {table.rows.map((row, index) => (
-                            <tr key={index} className="hover:bg-slate-900">
-                              <td className="border-b border-slate-900 py-2 text-slate-500">{index}</td>
+                          {table.rows.map(({ row, sourceIndex }) => (
+                            <tr key={sourceIndex} className="hover:bg-slate-900">
+                              <td className="border-b border-slate-900 py-2 text-slate-500">{sourceIndex}</td>
                               {table.columns.map((column) => {
-                                const rowPath = table.path ? `${table.path}[${index}]` : `[${index}]`;
+                                const rowPath = table.path ? `${table.path}[${sourceIndex}]` : `[${sourceIndex}]`;
                                 const cellPath = `${rowPath}.${column}`;
                                 return (
                                   <td
