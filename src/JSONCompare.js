@@ -19,6 +19,7 @@ import {
   ListTree,
   Plus,
   Redo2,
+  RotateCcw,
   Search,
   Table2,
   Trash2,
@@ -727,6 +728,38 @@ const JSONCompare = () => {
     setActiveDiffIndex(0);
   }, [filterType]);
 
+  const resetWorkspace = () => {
+    setWorkspaceTab("editor");
+    setEditorMode("tree");
+    setLeftText("");
+    setRightText("");
+    setSchemaText("");
+    setSettings(defaultSettings);
+    setSelectedPath("");
+    setSelectedPaths(new Set());
+    setSearchTerm("");
+    setContextMenu(null);
+    setDialog(null);
+    setHistory([]);
+    setFuture([]);
+    setQuery("");
+    setTransformCode("return value;");
+    setQueryResult("");
+    setFetchUrl("");
+    setComparison([]);
+    setFilterType("all");
+    setActiveDiffIndex(0);
+    setCopied("");
+    setStorageNotice("");
+    Object.values(STORAGE_KEYS).forEach((key) => {
+      try {
+        localStorage.removeItem(key);
+      } catch {
+        // Ignore unavailable storage.
+      }
+    });
+  };
+
   const modeButtons = [
     ["tree", "Tree", ListTree],
     ["code", "Code", Code2],
@@ -768,6 +801,7 @@ const JSONCompare = () => {
           <ToolbarButton onClick={() => !leftParsed.error && setLeftText(stringify(leftParsed.value, 0))}>Compact</ToolbarButton>
           <ToolbarButton onClick={() => !leftParsed.error && setLeftText(stringify(leftParsed.value, 2))}>Format</ToolbarButton>
           <ToolbarButton onClick={runCompare} active><GitCompare className="h-4 w-4" />Compare</ToolbarButton>
+          <ToolbarButton onClick={resetWorkspace}><RotateCcw className="h-4 w-4" />Reset</ToolbarButton>
           <input ref={leftFileRef} type="file" accept=".json,.jsonc,.txt" className="hidden" onChange={(event) => readFile(event, "left")} />
           <input ref={rightFileRef} type="file" accept=".json,.jsonc,.txt" className="hidden" onChange={(event) => readFile(event, "right")} />
         </div>
