@@ -1,25 +1,32 @@
 {
-  "short_name": "JSON Compare Online",
-  "name": "JSON Compare Online",
+  "short_name": "JSONEditor",
+  "name": "JSONEditor - JSON Editor and Compare Workbench",
+  "description": "A browser-local JSON editor, formatter, tree viewer, schema validator, query tool, and tree-based compare workbench.",
   "icons": [
     {
-      "src": "favicon.png",
-      "sizes": "64x64 32x32 24x24 16x16",
-      "type": "image/x-icon"
+      "src": "favicon-32.png",
+      "type": "image/png",
+      "sizes": "32x32",
+      "purpose": "any"
     },
     {
       "src": "logo192.png",
       "type": "image/png",
-      "sizes": "192x192"
+      "sizes": "192x192",
+      "purpose": "any maskable"
     },
     {
       "src": "logo512.png",
       "type": "image/png",
-      "sizes": "512x512"
+      "sizes": "512x512",
+      "purpose": "any maskable"
     }
   ],
-  "start_url": ".",
+  "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "theme_color": "#000000",
-  "background_color": "#ffffff"
+  "orientation": "any",
+  "theme_color": "#0b0d10",
+  "background_color": "#0b0d10",
+  "categories": ["developer", "productivity", "utilities"]
 }

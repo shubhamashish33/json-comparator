@@ -7,14 +7,14 @@ import {
 } from "./jsonUtils";
 
 test("reports JSON parse line and column", () => {
-  const result = parseJSONDetailed('{\n  "name": "JSONSync",\n}');
+  const result = parseJSONDetailed('{\n  "name": "JSONEditor",\n}');
   expect(result.error.line).toBe(3);
   expect(result.error.column).toBeGreaterThan(0);
 });
 
 test("repairs common JSON-ish input", () => {
-  const repaired = repairJSONish("{name: 'JSONSync', trailing: true,}");
-  expect(JSON.parse(repaired)).toEqual({ name: "JSONSync", trailing: true });
+  const repaired = repairJSONish("{name: 'JSONEditor', trailing: true,}");
+  expect(JSON.parse(repaired)).toEqual({ name: "JSONEditor", trailing: true });
 });
 
 test("supports ignored paths and numeric tolerance", () => {
