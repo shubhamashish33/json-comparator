@@ -146,6 +146,64 @@ const FieldLabel = ({ children }) => (
   <label className="block text-xs uppercase tracking-wide text-slate-400 mb-1">{children}</label>
 );
 
+const parsePath = (path) => {
+  if (!path.trim()) return [];
+  return path
+    .replace(/\[(\d+)\]/g, ".$1")
+    .split(".")
+    .map((part) => part.trim())
+    .filter(Boolean);
+};
+
+const setValueAtJsonPath = (source, path, nextValue) => {
+  const parts = parsePath(path);
+  if (!parts.length) return nextValue;
+  const clone = source && typeof source === "object" ? JSON.parse(JSON.stringify(source)) : {};
+  let cursor = clone;
+
+  parts.forEach((part, index) => {
+    const isLast = index === parts.length - 1;
+    if (isLast) {
+      cursor[part] = nextValue;
+      return;
+    }
+    const nextPart = parts[index + 1];
+    if (!cursor[part] || typeof cursor[part] !== "object") {
+      cursor[part] = /^\d+$/.test(nextPart) ? [] : {};
+    }
+    cursor = cursor[part];
+  });
+
+  return clone;
+};
+
+const removeValueAtJsonPath = (source, path) => {
+  const parts = parsePath(path);
+  if (!parts.length || !source || typeof source !== "object") return source;
+  const clone = JSON.parse(JSON.stringify(source));
+  let cursor = clone;
+
+  for (let index = 0; index < parts.length - 1; index += 1) {
+    cursor = cursor?.[parts[index]];
+    if (!cursor || typeof cursor !== "object") return clone;
+  }
+
+  const last = parts[parts.length - 1];
+  if (Array.isArray(cursor) && /^\d+$/.test(last)) cursor.splice(Number(last), 1);
+  else delete cursor[last];
+  return clone;
+};
+
+const parseEditorValue = (value, kind) => {
+  if (kind === "string") return value;
+  if (kind === "number") return Number(value);
+  if (kind === "boolean") return value === "true";
+  if (kind === "null") return null;
+  const parsed = parseJSONDetailed(value);
+  if (parsed.error) throw parsed.error;
+  return parsed.value;
+};
+
 const TreeNode = memo(
   ({
     nodeKey,
@@ -430,41 +488,40 @@ const EditorPanel = ({
   inputRef,
   isMinified,
 }) => {
-  const tone = side === "left" ? "purple" : "blue";
-  const buttonTone = side === "left"
-    ? "bg-purple-600/60 hover:bg-purple-600"
-    : "bg-blue-600/60 hover:bg-blue-600";
+  const panelTone = side === "left" ? "border-cyan-500/25" : "border-slate-700";
+  const iconTone = side === "left" ? "text-cyan-300" : "text-blue-300";
+  const buttonTone = "border border-slate-700 bg-[#151a20] text-slate-200 hover:bg-slate-800";
 
   return (
-    <div className={`min-w-0 overflow-hidden rounded-xl border border-${tone}-500/30 bg-slate-800/50 p-4 backdrop-blur`}>
+    <div className={`min-w-0 overflow-hidden border ${panelTone} bg-[#101419] p-4`}>
       <div className="mb-3 flex min-w-0 flex-col gap-3 2xl:flex-row 2xl:items-start 2xl:justify-between">
         <div className="min-w-0">
-          <h3 className="flex items-center gap-2 text-xl font-semibold text-white">
-            <span className={`flex h-8 w-8 items-center justify-center rounded-full bg-${tone}-600 text-sm`}>{side === "left" ? "1" : "2"}</span>
+          <h3 className="flex items-center gap-2 text-base font-semibold text-white">
+            <span className={`flex h-7 w-7 items-center justify-center border border-slate-700 bg-slate-900 text-xs ${iconTone}`}>{side === "left" ? "1" : "2"}</span>
             {title}
           </h3>
           {fileName && (
-            <div className={`mt-2 flex items-center gap-2 text-sm text-${tone}-300`}>
+            <div className={`mt-2 flex items-center gap-2 text-xs ${iconTone}`}>
               <FileJson className="w-4 h-4" />
               <span className="truncate">{fileName}</span>
             </div>
           )}
         </div>
         <div className="grid min-w-0 grid-cols-3 gap-2 sm:flex sm:flex-wrap sm:justify-start 2xl:justify-end">
-          <button onClick={onPaste} className="inline-flex items-center justify-center gap-1 rounded bg-slate-700/70 px-2.5 py-1 text-sm text-white hover:bg-slate-600">
+          <button onClick={onPaste} className={`inline-flex items-center justify-center gap-1 px-2.5 py-1 text-xs ${buttonTone}`}>
             <Clipboard className="inline h-3 w-3" /> Paste
           </button>
-          <button onClick={() => inputRef.current?.click()} className={`inline-flex items-center justify-center gap-1 rounded px-2.5 py-1 text-sm text-white ${buttonTone}`}>
+          <button onClick={() => inputRef.current?.click()} className={`inline-flex items-center justify-center gap-1 px-2.5 py-1 text-xs ${buttonTone}`}>
             <Upload className="inline h-3 w-3" /> Upload
           </button>
-          <button onClick={onFormat} className={`rounded px-2.5 py-1 text-sm text-white ${buttonTone}`}>Format</button>
-          <button onClick={onMinify} title={isMinified ? "Expand" : "Minify"} className={`inline-flex items-center justify-center rounded px-2.5 py-1 text-sm text-white ${buttonTone}`}>
+          <button onClick={onFormat} className={`px-2.5 py-1 text-xs ${buttonTone}`}>Format</button>
+          <button onClick={onMinify} title={isMinified ? "Expand" : "Minify"} className={`inline-flex items-center justify-center px-2.5 py-1 text-xs ${buttonTone}`}>
             {isMinified ? <Maximize2 className="inline h-3 w-3" /> : <Minimize2 className="inline h-3 w-3" />}
           </button>
-          <button onClick={onRepair} title="Repair common JSON-ish input" className={`inline-flex items-center justify-center rounded px-2.5 py-1 text-sm text-white ${buttonTone}`}>
+          <button onClick={onRepair} title="Repair common JSON-ish input" className={`inline-flex items-center justify-center px-2.5 py-1 text-xs ${buttonTone}`}>
             <Wand2 className="inline h-3 w-3" />
           </button>
-          <button onClick={onCopy} className={`inline-flex items-center justify-center rounded px-2.5 py-1 text-sm text-white ${buttonTone}`}>
+          <button onClick={onCopy} className={`inline-flex items-center justify-center px-2.5 py-1 text-xs ${buttonTone}`}>
             <Copy className="inline h-3 w-3" />
           </button>
         </div>
@@ -490,9 +547,9 @@ const EditorPanel = ({
           };
           reader.readAsText(file);
         }}
-        className={`relative ${dragOver ? `ring-2 ring-${tone}-500` : ""}`}
+        className={`relative ${dragOver ? "ring-2 ring-cyan-500" : ""}`}
       >
-        <div className="h-80 overflow-hidden rounded-lg border border-slate-700 bg-[#1e1e1e]">
+        <div className="h-[30rem] overflow-hidden border border-slate-800 bg-[#1e1e1e]">
           <Editor
             height="100%"
             defaultLanguage="json"
@@ -516,8 +573,8 @@ const EditorPanel = ({
           />
         </div>
         {dragOver && (
-          <div className={`pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-${tone}-600/20`}>
-            <div className="rounded-xl bg-slate-950/90 p-5 text-white">Drop JSON file here</div>
+          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-cyan-600/20">
+            <div className="border border-slate-700 bg-slate-950/90 p-5 text-white">Drop JSON file here</div>
           </div>
         )}
       </div>
@@ -572,6 +629,10 @@ const JSONCompare = () => {
   const [globalExpandToggle, setGlobalExpandToggle] = useState(0);
   const [globalExpandAction, setGlobalExpandAction] = useState("auto");
   const [activeResultTab, setActiveResultTab] = useState("tree");
+  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState("editor");
+  const [keyPath, setKeyPath] = useState("");
+  const [keyValue, setKeyValue] = useState("");
+  const [keyValueType, setKeyValueType] = useState("json");
 
   const editor1Ref = useRef(null);
   const editor2Ref = useRef(null);
@@ -584,6 +645,7 @@ const JSONCompare = () => {
   const debouncedSearchTerm2 = useDebounce(searchTerm2, 300);
   const diffMap = useMemo(() => new Map(comparison.map((diff) => [diff.path, diff])), [comparison]);
   const patch = useMemo(() => toJsonPatch(comparison), [comparison]);
+  const editorParsed = useMemo(() => parseJSONDetailed(json1), [json1]);
   const stats = useMemo(
     () => ({
       total: comparison.length,
@@ -600,7 +662,8 @@ const JSONCompare = () => {
     });
   }, [comparison, filterType]);
 
-  const searchMatches1 = useMemo(() => (debouncedSearchTerm1 && parsedJson1 ? searchInObject(parsedJson1, debouncedSearchTerm1) : []), [debouncedSearchTerm1, parsedJson1]);
+  const searchSource1 = activeWorkspaceTab === "editor" ? editorParsed.value : parsedJson1;
+  const searchMatches1 = useMemo(() => (debouncedSearchTerm1 && searchSource1 ? searchInObject(searchSource1, debouncedSearchTerm1) : []), [debouncedSearchTerm1, searchSource1]);
   const searchMatches2 = useMemo(() => (debouncedSearchTerm2 && parsedJson2 ? searchInObject(parsedJson2, debouncedSearchTerm2) : []), [debouncedSearchTerm2, parsedJson2]);
 
   const expandedPaths1 = useMemo(() => {
@@ -679,9 +742,37 @@ const JSONCompare = () => {
     setSchemaErrors1(schema1);
     setSchemaErrors2(schema2);
     setShowComparison(true);
+    setActiveWorkspaceTab("compare");
     setActiveDiffIndex(diffs.length ? 0 : -1);
     setSelectedDiffPath(diffs[0]?.path || "");
   }, [json1, json2, schemaText, settings]);
+
+  const applyKeyEdit = useCallback(() => {
+    const parsed = parseJSONDetailed(json1 || "{}");
+    setError1(parsed.error);
+    if (parsed.error) return;
+
+    try {
+      const nextValue = parseEditorValue(keyValue, keyValueType);
+      const nextJson = setValueAtJsonPath(parsed.value || {}, keyPath, nextValue);
+      setJson1(safeJsonStringify(nextJson, 2));
+      setParsedJson1(nextJson);
+      setError1(null);
+    } catch (error) {
+      setError1({ message: error.message || "Invalid value for selected type" });
+    }
+  }, [json1, keyPath, keyValue, keyValueType]);
+
+  const removeKeyEdit = useCallback(() => {
+    const parsed = parseJSONDetailed(json1 || "{}");
+    setError1(parsed.error);
+    if (parsed.error) return;
+
+    const nextJson = removeValueAtJsonPath(parsed.value || {}, keyPath);
+    setJson1(safeJsonStringify(nextJson, 2));
+    setParsedJson1(nextJson);
+    setError1(null);
+  }, [json1, keyPath]);
 
   const focusDiff = useCallback((index) => {
     const diff = comparison[index];
@@ -826,49 +917,63 @@ const JSONCompare = () => {
   } : null;
 
   return (
-    <div className="min-h-screen bg-slate-950 pb-10 font-sans text-slate-200 selection:bg-purple-500/30">
+    <div className="min-h-screen bg-[#0b0d10] pb-10 font-mono text-slate-200 selection:bg-cyan-500/20">
       <Analytics />
-      <nav className="fixed top-0 z-50 w-full border-b border-slate-800/50 bg-slate-950/80 backdrop-blur-md">
-        <div className="mx-auto flex h-16 max-w-[120rem] items-center justify-between px-4 sm:px-6">
-          <div className="flex cursor-pointer items-center gap-2 transition-transform hover:scale-105" onClick={() => navigate("/")}>
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-purple-600 to-blue-600">
-              <GitCompare className="h-5 w-5 text-white" />
-            </div>
-            <span className="hidden text-xl font-bold tracking-tight text-white sm:block">JSON<span className="text-purple-400">Sync</span></span>
+      <nav className="sticky top-0 z-50 w-full border-b border-slate-800 bg-[#0b0d10]/95 backdrop-blur">
+        <div className="mx-auto flex h-14 max-w-[120rem] items-center justify-between px-4 sm:px-6">
+          <div className="flex cursor-pointer items-center gap-2" onClick={() => navigate("/")}>
+            <GitCompare className="h-5 w-5 text-cyan-400" />
+            <span className="hidden text-sm font-semibold uppercase text-white sm:block">JSONSync</span>
           </div>
-          <button onClick={() => navigate("/")} className="flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-sm font-medium text-white hover:bg-white/20">
+          <button onClick={() => navigate("/")} className="flex items-center gap-2 border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-900">
             <Home className="h-4 w-4" />
-            <span className="hidden sm:inline">Back to Home</span>
+            <span className="hidden sm:inline">Home</span>
           </button>
         </div>
       </nav>
 
-      <main className="mx-auto max-w-[120rem] px-4 pt-24 sm:px-6">
-        <div className="mb-8 text-center">
-          <h1 className="text-4xl font-extrabold tracking-tight text-white md:text-5xl">JSON Workspace</h1>
-          <p className="mx-auto mt-3 max-w-2xl text-lg text-slate-400">Compare payloads, validate shape, export patches, and navigate nested drift quickly.</p>
+      <main className="mx-auto max-w-[120rem] px-4 pt-6 sm:px-6">
+        <div className="mb-5 flex flex-col gap-4 border-b border-slate-800 pb-5 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold text-white md:text-3xl">JSON workspace</h1>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">Edit one payload by default. Switch to comparison only when you need a diff.</p>
+          </div>
+          <div className="flex w-full border border-slate-800 bg-[#101419] p-1 text-sm lg:w-auto">
+            {[
+              ["editor", "Editor"],
+              ["compare", "Compare"],
+            ].map(([tab, label]) => (
+              <button
+                key={tab}
+                onClick={() => setActiveWorkspaceTab(tab)}
+                className={`flex-1 px-4 py-2 lg:flex-none ${activeWorkspaceTab === tab ? "bg-cyan-500 text-slate-950" : "text-slate-300 hover:bg-slate-900"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div className="mb-6 flex flex-wrap justify-center gap-3">
-          <button onClick={() => { setJson1(safeJsonStringify(sampleJSON1, 2)); setJson2(safeJsonStringify(sampleJSON2, 2)); setFileName1("sample-left.json"); setFileName2("sample-right.json"); }} className="flex items-center gap-2 rounded-full border border-slate-700 bg-slate-800 px-5 py-2.5 text-white hover:bg-slate-700">
-            <Copy className="h-4 w-4 text-purple-400" /> Load Sample
+        <div className="mb-5 flex flex-wrap gap-2">
+          <button onClick={() => { setJson1(safeJsonStringify(sampleJSON1, 2)); setJson2(safeJsonStringify(sampleJSON2, 2)); setFileName1("sample-left.json"); setFileName2("sample-right.json"); }} className="flex items-center gap-2 border border-slate-700 bg-[#101419] px-3 py-2 text-xs text-slate-200 hover:bg-slate-900">
+            <Copy className="h-4 w-4 text-cyan-400" /> Sample
           </button>
-          <button onClick={() => { setJson1(json2); setJson2(json1); setFileName1(fileName2); setFileName2(fileName1); }} className="flex items-center gap-2 rounded-full border border-slate-700 bg-slate-800 px-5 py-2.5 text-white hover:bg-slate-700">
-            <ArrowLeftRight className="h-4 w-4 text-blue-400" /> Swap
+          <button onClick={() => { setJson1(json2); setJson2(json1); setFileName1(fileName2); setFileName2(fileName1); }} className="flex items-center gap-2 border border-slate-700 bg-[#101419] px-3 py-2 text-xs text-slate-200 hover:bg-slate-900">
+            <ArrowLeftRight className="h-4 w-4 text-blue-300" /> Swap
           </button>
-          <button onClick={compare} className="flex items-center gap-2 rounded-full bg-purple-600 px-8 py-2.5 font-bold tracking-wide text-white shadow-[0_0_20px_-5px_rgba(168,85,247,0.5)] hover:bg-purple-500">
-            <GitCompare className="h-4 w-4" /> Compare Now
+          <button onClick={compare} className="flex items-center gap-2 border border-cyan-500 bg-cyan-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-cyan-400">
+            <GitCompare className="h-4 w-4" /> Compare
           </button>
-          <button onClick={() => setShowSettings(true)} className="flex items-center gap-2 rounded-full border border-slate-700 bg-slate-800 px-5 py-2.5 text-white hover:bg-slate-700">
-            <Settings2 className="h-4 w-4 text-purple-400" /> Settings
+          <button onClick={() => setShowSettings(true)} className="flex items-center gap-2 border border-slate-700 bg-[#101419] px-3 py-2 text-xs text-slate-200 hover:bg-slate-900">
+            <Settings2 className="h-4 w-4 text-slate-400" /> Settings
           </button>
-          <button onClick={() => setShowSchema((current) => !current)} className="flex items-center gap-2 rounded-full border border-slate-700 bg-slate-800 px-5 py-2.5 text-white hover:bg-slate-700">
-            <FileJson className="h-4 w-4 text-green-400" /> Schema
+          <button onClick={() => setShowSchema((current) => !current)} className="flex items-center gap-2 border border-slate-700 bg-[#101419] px-3 py-2 text-xs text-slate-200 hover:bg-slate-900">
+            <FileJson className="h-4 w-4 text-emerald-400" /> Schema
           </button>
-          <button onClick={() => setShowFetch((current) => !current)} className="flex items-center gap-2 rounded-full border border-slate-700 bg-slate-800 px-5 py-2.5 text-white hover:bg-slate-700">
-            <Link2 className="h-4 w-4 text-blue-400" /> Request
+          <button onClick={() => setShowFetch((current) => !current)} className="flex items-center gap-2 border border-slate-700 bg-[#101419] px-3 py-2 text-xs text-slate-200 hover:bg-slate-900">
+            <Link2 className="h-4 w-4 text-blue-300" /> Request
           </button>
-          <button onClick={reset} className="flex items-center gap-2 rounded-full border border-red-900/50 bg-red-900/40 px-5 py-2.5 text-red-200 hover:bg-red-900/60">
+          <button onClick={reset} className="ml-auto flex items-center gap-2 border border-red-900/50 bg-red-950/30 px-3 py-2 text-xs text-red-200 hover:bg-red-950/50">
             <RotateCcw className="h-4 w-4" /> Reset
           </button>
         </div>
@@ -998,6 +1103,119 @@ const JSONCompare = () => {
           </section>
         )}
 
+        {activeWorkspaceTab === "editor" && (
+          <section className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_380px]">
+            <EditorPanel
+              side="left"
+              title="JSON editor"
+              value={json1}
+              setValue={setJson1}
+              error={error1}
+              setError={setError1}
+              fileName={fileName1}
+              setFileName={setFileName1}
+              dragOver={dragOver1}
+              setDragOver={setDragOver1}
+              editorSettings={editorSettings}
+              onEditorMount={(editor) => { editor1Ref.current = editor; }}
+              onFormat={() => formatJSON(json1, setJson1, setError1)}
+              onMinify={() => minifyJSON(json1, setJson1, setError1, isMinified1, setIsMinified1)}
+              onRepair={() => repairInput(json1, setJson1, setError1)}
+              onPaste={() => pasteInto(setJson1, setError1, setFileName1, "Pasted JSON")}
+              onCopy={() => copyToClipboard(json1, "json1")}
+              onUpload={(event) => readFile(event, setJson1, setError1, setFileName1)}
+              inputRef={fileInput1Ref}
+              isMinified={isMinified1}
+            />
+
+            <aside className="space-y-4">
+              <div className="border border-slate-800 bg-[#101419] p-4">
+                <h2 className="text-sm font-semibold text-white">Key editor</h2>
+                <div className="mt-4 space-y-3">
+                  <div>
+                    <FieldLabel>Path</FieldLabel>
+                    <input
+                      value={keyPath}
+                      onChange={(event) => setKeyPath(event.target.value)}
+                      placeholder="user.profile.name"
+                      className="w-full border border-slate-700 bg-[#0b0d10] px-3 py-2 text-sm text-white outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                  <div className="grid grid-cols-[120px_1fr] gap-2">
+                    <div>
+                      <FieldLabel>Type</FieldLabel>
+                      <select
+                        value={keyValueType}
+                        onChange={(event) => setKeyValueType(event.target.value)}
+                        className="w-full border border-slate-700 bg-[#0b0d10] px-3 py-2 text-sm text-white outline-none focus:border-cyan-500"
+                      >
+                        <option value="json">JSON</option>
+                        <option value="string">String</option>
+                        <option value="number">Number</option>
+                        <option value="boolean">Boolean</option>
+                        <option value="null">Null</option>
+                      </select>
+                    </div>
+                    <div>
+                      <FieldLabel>Value</FieldLabel>
+                      <input
+                        value={keyValue}
+                        onChange={(event) => setKeyValue(event.target.value)}
+                        placeholder={keyValueType === "json" ? "{\"active\":true}" : "value"}
+                        disabled={keyValueType === "null"}
+                        className="w-full border border-slate-700 bg-[#0b0d10] px-3 py-2 text-sm text-white outline-none focus:border-cyan-500 disabled:text-slate-600"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button onClick={applyKeyEdit} disabled={!keyPath.trim()} className="border border-cyan-500 bg-cyan-500 px-3 py-2 text-xs font-semibold text-slate-950 hover:bg-cyan-400 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-800 disabled:text-slate-500">
+                      Set key
+                    </button>
+                    <button onClick={removeKeyEdit} disabled={!keyPath.trim()} className="border border-red-800 bg-red-950/40 px-3 py-2 text-xs text-red-200 hover:bg-red-950/70 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-900 disabled:text-slate-600">
+                      Remove key
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="border border-slate-800 bg-[#101419] p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <h2 className="text-sm font-semibold text-white">Parsed tree</h2>
+                  <span className={`text-xs ${editorParsed.error ? "text-red-300" : "text-emerald-300"}`}>{editorParsed.error ? "invalid" : "valid"}</span>
+                </div>
+                {editorParsed.error ? (
+                  <ErrorMessage error={editorParsed.error} />
+                ) : (
+                  <JSONTree
+                    title="Current JSON"
+                    data={editorParsed.value}
+                    diffMap={new Map()}
+                    isLeft
+                    pinnedPath={pinnedPath1}
+                    hoveredPath={hoveredPath1}
+                    selectedPath=""
+                    searchTerm={searchTerm1}
+                    currentMatchIndex={currentMatchIndex1}
+                    searchMatches={searchMatches1}
+                    expandedPaths={expandedPaths1}
+                    globalExpandToggle={globalExpandToggle}
+                    globalExpandAction={globalExpandAction}
+                    onHover={setHoveredPath1}
+                    onPin={(path) => setPinnedPath1(pinnedPath1 === path ? "" : path)}
+                    onClearPin={() => setPinnedPath1("")}
+                    onExpandAll={() => { setGlobalExpandAction("expand"); setGlobalExpandToggle((value) => value + 1); }}
+                    onCollapseAll={() => { setGlobalExpandAction("collapse"); setGlobalExpandToggle((value) => value + 1); }}
+                    scrollRef={scrollRef1}
+                    onSearchChange={setSearchTerm1}
+                    onSearchKeyDown={(event) => { if (event.key === "Enter" && searchMatches1.length) setCurrentMatchIndex1((current) => (current + 1) % searchMatches1.length); }}
+                  />
+                )}
+              </div>
+            </aside>
+          </section>
+        )}
+
+        {activeWorkspaceTab === "compare" && (
         <section className={`grid gap-4 ${showComparison ? "xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]" : "md:grid-cols-2"}`}>
           <div className={`grid gap-4 ${showComparison ? "" : "md:col-span-2 md:grid-cols-2"}`}>
             <EditorPanel
@@ -1175,6 +1393,7 @@ const JSONCompare = () => {
             </div>
           )}
         </section>
+        )}
       </main>
     </div>
   );
