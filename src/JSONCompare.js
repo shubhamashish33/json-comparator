@@ -31,7 +31,6 @@ import {
 } from "lucide-react";
 import {
   applyDiffToLeft,
-  compareJSONValues,
   getValueAtPath,
   parseJSONDetailed,
   repairJSONish,
@@ -94,13 +93,21 @@ const sampleRight = {
 };
 
 const TREE_PAGE_SIZE = 200;
-const TEXT_ROW_LIMIT = 5000;
 const TABLE_ROW_LIMIT = 1000;
 const TABLE_COLUMN_SAMPLE = 250;
 const SEARCH_RESULT_LIMIT = 500;
 const PARSE_DEBOUNCE_MS = 350;
 const STORAGE_TEXT_LIMIT = 750_000;
 const HISTORY_TEXT_LIMIT = 1_000_000;
+const WORKER_TIMEOUT_MS = 15000;
+const EMPTY_WORKER_PARSE = {
+  value: null,
+  error: null,
+  index: { rows: [], visited: 0, truncated: false },
+  status: "idle",
+  label: "Idle",
+  progress: 0,
+};
 
 const useDebounce = (value, delay) => {
   const [debounced, setDebounced] = useState(value);
@@ -236,22 +243,55 @@ const valueType = (value) => {
   return typeof value;
 };
 
-const flattenRows = (value, path = "", limit = TEXT_ROW_LIMIT) => {
+const collectTreeEntries = (value, visibleCount) => {
+  if (!value || typeof value !== "object") return { entries: [], childCount: 0 };
+  if (Array.isArray(value)) {
+    return {
+      entries: Array.from({ length: Math.min(value.length, visibleCount) }, (_, index) => [index, value[index]]),
+      childCount: value.length,
+    };
+  }
+
+  const entries = [];
+  let childCount = 0;
+  for (const key in value) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) {
+      if (entries.length < visibleCount) entries.push([key, value[key]]);
+      childCount += 1;
+    }
+  }
+  return { entries, childCount };
+};
+
+const buildFallbackIndex = (value, limit = 5000) => {
+  if (value === null || value === undefined) return { rows: [], visited: 0, truncated: false };
   const rows = [];
-  const visit = (node, currentPath) => {
-    if (rows.length >= limit) return;
-    rows.push({ path: currentPath || "root", type: valueType(node), value: node });
-    if (node && typeof node === "object") {
-      const entries = Array.isArray(node)
-        ? Array.from({ length: Math.min(node.length, limit - rows.length) }, (_, index) => [index, node[index]])
-        : Object.keys(node).slice(0, Math.max(0, limit - rows.length)).map((key) => [key, node[key]]);
-      entries.forEach(([key, child]) => {
-        visit(child, formatPath(currentPath, key, Array.isArray(node)));
+  const stack = [{ node: value, path: "" }];
+  let visited = 0;
+
+  while (stack.length) {
+    const { node, path } = stack.pop();
+    visited += 1;
+    if (rows.length < limit) {
+      rows.push({
+        path: path || "root",
+        type: valueType(node),
+        value: node && typeof node === "object" ? stringify(node, 0) : node,
       });
     }
-  };
-  visit(value, path);
-  return rows;
+
+    if (node && typeof node === "object") {
+      const entries = Array.isArray(node)
+        ? Array.from({ length: node.length }, (_, index) => [index, node[index]])
+        : Object.keys(node).map((key) => [key, node[key]]);
+      for (let index = entries.length - 1; index >= 0; index -= 1) {
+        const [key, child] = entries[index];
+        stack.push({ node: child, path: formatPath(path, key, Array.isArray(node)) });
+      }
+    }
+  }
+
+  return { rows, visited, truncated: rows.length >= limit && visited > rows.length };
 };
 
 const collectTable = (value) => {
@@ -265,28 +305,6 @@ const collectTable = (value) => {
     if (rows.length <= TABLE_COLUMN_SAMPLE) Object.keys(row).forEach((key) => columns.add(key));
   }
   return { rows, columns: Array.from(columns), total: value.length, truncated: value.length > rows.length };
-};
-
-const limitedSearch = (value, term, limit = SEARCH_RESULT_LIMIT) => {
-  if (!term || term.length < 2) return [];
-  const lower = term.toLowerCase();
-  const matches = [];
-  const visit = (node, path) => {
-    if (matches.length >= limit || node === null || node === undefined) return;
-    if (typeof node !== "object") {
-      if (String(node).toLowerCase().includes(lower)) matches.push(path || "root");
-      return;
-    }
-    const keys = Array.isArray(node) ? Array.from({ length: node.length }, (_, index) => index) : Object.keys(node);
-    for (const key of keys) {
-      if (matches.length >= limit) break;
-      const nextPath = formatPath(path, key, Array.isArray(node));
-      if (String(key).toLowerCase().includes(lower)) matches.push(nextPath);
-      visit(node[key], nextPath);
-    }
-  };
-  visit(value, "");
-  return matches;
 };
 
 const downloadText = (name, text, type = "application/json") => {
@@ -365,12 +383,7 @@ const TreeNode = ({
   const isArray = Array.isArray(value);
   const selected = selectedPath === path || selectedPaths.has(path);
   const matched = matches.has(path);
-  const childCount = isContainer ? isArray ? value.length : Object.keys(value).length : 0;
-  const entries = isContainer
-    ? isArray
-      ? Array.from({ length: Math.min(value.length, visibleCount) }, (_, index) => [index, value[index]])
-      : Object.keys(value).slice(0, visibleCount).map((key) => [key, value[key]])
-    : [];
+  const { entries, childCount } = collectTreeEntries(value, visibleCount);
   const preview = isContainer
     ? isArray ? `[${open ? "" : `${value.length} items`}]` : `{${open ? "" : `${childCount} keys`}}`
     : stringify(value, 0);
@@ -502,15 +515,26 @@ const JSONCompare = () => {
   const navigate = useNavigate();
   const leftFileRef = useRef(null);
   const rightFileRef = useRef(null);
+  const workerRef = useRef(null);
+  const taskIdRef = useRef(0);
+  const activeTasksRef = useRef(new Map());
+  const directEditActiveRef = useRef(false);
+  const directEditTimerRef = useRef(null);
   const [workspaceTab, setWorkspaceTab] = useState("editor");
   const [editorMode, setEditorMode] = useState("tree");
   const [leftText, setLeftText] = useState("");
   const [rightText, setRightText] = useState("");
   const [schemaText, setSchemaText] = useState("");
+  const [leftParsed, setLeftParsed] = useState(EMPTY_WORKER_PARSE);
+  const [rightParsed, setRightParsed] = useState(EMPTY_WORKER_PARSE);
+  const [schemaParsed, setSchemaParsed] = useState(EMPTY_WORKER_PARSE);
   const [settings, setSettings] = useState(defaultSettings);
   const [selectedPath, setSelectedPath] = useState("");
   const [selectedPaths, setSelectedPaths] = useState(new Set());
   const [searchTerm, setSearchTerm] = useState("");
+  const [searchResult, setSearchResult] = useState({ matches: [], visited: 0, truncated: false, status: "idle" });
+  const [workerStatus, setWorkerStatus] = useState({ busy: false, label: "Idle", progress: 0 });
+  const [compareStatus, setCompareStatus] = useState({ busy: false, label: "Idle", progress: 0 });
   const [contextMenu, setContextMenu] = useState(null);
   const [dialog, setDialog] = useState(null);
   const [history, setHistory] = useState([]);
@@ -529,12 +553,108 @@ const JSONCompare = () => {
   const debouncedRightText = useDebounce(rightText, PARSE_DEBOUNCE_MS);
   const debouncedSchemaText = useDebounce(schemaText, PARSE_DEBOUNCE_MS);
   const debouncedSearchTerm = useDebounce(searchTerm, 250);
-  const leftParsed = useMemo(() => parseJSONDetailed(debouncedLeftText), [debouncedLeftText]);
-  const rightParsed = useMemo(() => parseJSONDetailed(debouncedRightText), [debouncedRightText]);
-  const schemaParsed = useMemo(() => parseJSONDetailed(debouncedSchemaText), [debouncedSchemaText]);
-  const isParsingPending = leftText !== debouncedLeftText || rightText !== debouncedRightText || schemaText !== debouncedSchemaText;
-  const matches = useMemo(() => new Set(leftParsed.value ? limitedSearch(leftParsed.value, debouncedSearchTerm) : []), [debouncedSearchTerm, leftParsed.value]);
-  const flattened = useMemo(() => leftParsed.value === null ? [] : flattenRows(leftParsed.value), [leftParsed.value]);
+  const createWorker = useCallback(() => {
+    if (workerRef.current) return workerRef.current;
+    const worker = new Worker(new URL("./jsonWorker.js", import.meta.url), { type: "module" });
+    worker.onmessage = (event) => {
+      const { id, type, result, error, label, progress } = event.data;
+      const task = activeTasksRef.current.get(id);
+      if (!task) return;
+
+      if (type === "progress") {
+        task.onProgress?.({ label, progress });
+        setWorkerStatus({ busy: true, label, progress });
+        return;
+      }
+
+      activeTasksRef.current.delete(id);
+      setWorkerStatus(activeTasksRef.current.size ? { busy: true, label: "Finishing work", progress: 90 } : { busy: false, label: "Idle", progress: 0 });
+      if (type === "result") task.resolve(result);
+      else task.reject(new Error(error?.message || "Worker task failed"));
+    };
+    worker.onerror = (error) => {
+      activeTasksRef.current.forEach((task) => task.reject(new Error(error.message || "Worker failed")));
+      activeTasksRef.current.clear();
+      setWorkerStatus({ busy: false, label: "Worker failed", progress: 0 });
+    };
+    workerRef.current = worker;
+    return worker;
+  }, []);
+
+  const runWorkerTask = useCallback((task, payload, onProgress) => {
+    const worker = createWorker();
+    const id = `${task}-${Date.now()}-${taskIdRef.current += 1}`;
+    return new Promise((resolve, reject) => {
+      const timer = window.setTimeout(() => {
+        activeTasksRef.current.delete(id);
+        reject(new Error("Worker timed out"));
+        setWorkerStatus(activeTasksRef.current.size ? { busy: true, label: "Finishing work", progress: 90 } : { busy: false, label: "Idle", progress: 0 });
+      }, WORKER_TIMEOUT_MS);
+      activeTasksRef.current.set(id, {
+        resolve: (result) => {
+          window.clearTimeout(timer);
+          resolve(result);
+        },
+        reject: (error) => {
+          window.clearTimeout(timer);
+          reject(error);
+        },
+        onProgress,
+      });
+      setWorkerStatus({ busy: true, label: "Queued work", progress: 5 });
+      worker.postMessage({ id, task, payload });
+    });
+  }, [createWorker]);
+
+  const cancelWorkerWork = useCallback(() => {
+    activeTasksRef.current.forEach((task) => task.reject(new Error("Canceled")));
+    activeTasksRef.current.clear();
+    workerRef.current?.terminate();
+    workerRef.current = null;
+    setWorkerStatus({ busy: false, label: "Canceled", progress: 0 });
+    setCompareStatus({ busy: false, label: "Canceled", progress: 0 });
+    setLeftParsed((current) => ({ ...current, status: "idle", label: "Canceled", progress: 0 }));
+    setRightParsed((current) => ({ ...current, status: "idle", label: "Canceled", progress: 0 }));
+    setSchemaParsed((current) => ({ ...current, status: "idle", label: "Canceled", progress: 0 }));
+    setSearchResult((current) => ({ ...current, status: "idle" }));
+  }, []);
+
+  const parseInWorker = useCallback((text, setParsed) => {
+    let stale = false;
+    if (!text.trim()) {
+      setParsed({ ...EMPTY_WORKER_PARSE, status: "done", label: "Ready", progress: 100 });
+      return () => {
+        stale = true;
+      };
+    }
+    setParsed((current) => ({ ...current, status: "queued", label: "Queued parse", progress: 5 }));
+    runWorkerTask("parse", { text }, (progress) => {
+      if (!stale) setParsed((current) => ({ ...current, status: "working", ...progress }));
+    })
+      .then((result) => {
+        if (!stale) setParsed({ ...result, status: "done", label: "Ready", progress: 100 });
+      })
+      .catch((error) => {
+        if (stale || error.message === "Canceled") return;
+        const parsed = parseJSONDetailed(text);
+        if (parsed.error) {
+          setParsed({ ...parsed, index: { rows: [], visited: 0, truncated: false }, status: "error", label: "Invalid JSON", progress: 0 });
+        } else {
+          setParsed({ ...parsed, index: buildFallbackIndex(parsed.value), status: "done", label: "Ready", progress: 100 });
+        }
+      });
+    return () => {
+      stale = true;
+    };
+  }, [runWorkerTask]);
+
+  const isParsingPending =
+    leftText !== debouncedLeftText ||
+    rightText !== debouncedRightText ||
+    schemaText !== debouncedSchemaText ||
+    [leftParsed, rightParsed, schemaParsed].some((parsed) => parsed.status === "queued" || parsed.status === "working");
+  const matches = useMemo(() => new Set(searchResult.matches), [searchResult.matches]);
+  const flattened = leftParsed.index?.rows || [];
   const selectedValue = useMemo(() => selectedPath ? getValueAtPath(leftParsed.value, selectedPath) : leftParsed.value, [leftParsed.value, selectedPath]);
   const selectedTable = useMemo(() => collectTable(selectedValue), [selectedValue]);
   const rootTable = useMemo(() => collectTable(leftParsed.value), [leftParsed.value]);
@@ -559,6 +679,35 @@ const JSONCompare = () => {
     }
   }, []);
 
+  useEffect(() => parseInWorker(debouncedLeftText, setLeftParsed), [debouncedLeftText, parseInWorker]);
+  useEffect(() => parseInWorker(debouncedRightText, setRightParsed), [debouncedRightText, parseInWorker]);
+  useEffect(() => parseInWorker(debouncedSchemaText, setSchemaParsed), [debouncedSchemaText, parseInWorker]);
+
+  useEffect(() => {
+    let stale = false;
+    if (leftParsed.error || leftParsed.value === null || debouncedSearchTerm.length < 2) {
+      setSearchResult({ matches: [], visited: 0, truncated: false, status: "idle" });
+      return () => {
+        stale = true;
+      };
+    }
+
+    setSearchResult((current) => ({ ...current, status: "working" }));
+    runWorkerTask("search", { value: leftParsed.value, term: debouncedSearchTerm }, () => {
+      if (!stale) setSearchResult((current) => ({ ...current, status: "working" }));
+    })
+      .then((result) => {
+        if (!stale) setSearchResult({ ...result, status: "done" });
+      })
+      .catch((error) => {
+        if (!stale && error.message !== "Canceled") setSearchResult({ matches: [], visited: 0, truncated: false, status: "error" });
+      });
+
+    return () => {
+      stale = true;
+    };
+  }, [debouncedSearchTerm, leftParsed.error, leftParsed.value, runWorkerTask]);
+
   useEffect(() => {
     const leftStored = safeSetStorage(STORAGE_KEYS.left, leftText);
     const rightStored = safeSetStorage(STORAGE_KEYS.right, rightText);
@@ -581,29 +730,57 @@ const JSONCompare = () => {
     };
   }, []);
 
-  const commitValue = useCallback((nextValue) => {
-    if (leftText.length <= HISTORY_TEXT_LIMIT) setHistory((current) => [leftText, ...current].slice(0, 20));
-    else setHistory([]);
+  useEffect(() => () => {
+    workerRef.current?.terminate();
+    if (directEditTimerRef.current) window.clearTimeout(directEditTimerRef.current);
+  }, []);
+
+  const commitText = useCallback((nextText, { recordHistory = true } = {}) => {
+    if (nextText === leftText) return;
+    if (recordHistory && leftText.length <= HISTORY_TEXT_LIMIT) setHistory((current) => [leftText, ...current].slice(0, 20));
+    else if (recordHistory) setHistory([]);
     setFuture([]);
-    setLeftText(stringify(nextValue, 2));
+    setLeftText(nextText);
+    directEditActiveRef.current = false;
+    if (directEditTimerRef.current) window.clearTimeout(directEditTimerRef.current);
+  }, [leftText]);
+
+  const commitValue = useCallback((nextValue) => {
+    commitText(stringify(nextValue, 2));
+  }, [commitText]);
+
+  const updateLeftTextFromEditor = useCallback((nextText) => {
+    if (!directEditActiveRef.current) {
+      if (leftText.length <= HISTORY_TEXT_LIMIT) setHistory((current) => [leftText, ...current].slice(0, 20));
+      else setHistory([]);
+      setFuture([]);
+      directEditActiveRef.current = true;
+    }
+    setLeftText(nextText);
+    if (directEditTimerRef.current) window.clearTimeout(directEditTimerRef.current);
+    directEditTimerRef.current = window.setTimeout(() => {
+      directEditActiveRef.current = false;
+    }, 1000);
   }, [leftText]);
 
   const undo = () => {
     const [previous, ...rest] = history;
-    if (!previous) return;
+    if (previous === undefined) return;
     if (leftText.length <= HISTORY_TEXT_LIMIT) setFuture((current) => [leftText, ...current].slice(0, 20));
     else setFuture([]);
     setLeftText(previous);
     setHistory(rest);
+    directEditActiveRef.current = false;
   };
 
   const redo = () => {
     const [next, ...rest] = future;
-    if (!next) return;
+    if (next === undefined) return;
     if (leftText.length <= HISTORY_TEXT_LIMIT) setHistory((current) => [leftText, ...current].slice(0, 20));
     else setHistory([]);
     setLeftText(next);
     setFuture(rest);
+    directEditActiveRef.current = false;
   };
 
   const readFile = (event, target) => {
@@ -612,9 +789,7 @@ const JSONCompare = () => {
     const reader = new FileReader();
     reader.onload = (readerEvent) => {
       if (target === "left") {
-        if (leftText.length <= HISTORY_TEXT_LIMIT) setHistory((current) => [leftText, ...current].slice(0, 20));
-        else setHistory([]);
-        setLeftText(String(readerEvent.target.result || ""));
+        commitText(String(readerEvent.target.result || ""));
       } else {
         setRightText(String(readerEvent.target.result || ""));
       }
@@ -696,13 +871,21 @@ const JSONCompare = () => {
     setDialog(null);
   };
 
-  const runCompare = () => {
+  const runCompare = async () => {
     if (leftParsed.error || rightParsed.error || leftParsed.value === null || rightParsed.value === null) return;
-    const diffs = compareJSONValues(leftParsed.value, rightParsed.value, settings);
-    setComparison(diffs);
-    setActiveDiffIndex(0);
-    if (diffs[0]?.path) setSelectedPath(diffs[0].path);
+    setCompareStatus({ busy: true, label: "Queued compare", progress: 5 });
     setWorkspaceTab("compare");
+    try {
+      const diffs = await runWorkerTask("diff", { left: leftParsed.value, right: rightParsed.value, settings }, (progress) => {
+        setCompareStatus({ busy: true, ...progress });
+      });
+      setComparison(diffs);
+      setActiveDiffIndex(0);
+      if (diffs[0]?.path) setSelectedPath(diffs[0].path);
+      setCompareStatus({ busy: false, label: "Ready", progress: 100 });
+    } catch (error) {
+      if (error.message !== "Canceled") setCompareStatus({ busy: false, label: error.message || "Compare failed", progress: 0 });
+    }
   };
 
   const fetchRemote = async () => {
@@ -779,6 +962,8 @@ const JSONCompare = () => {
     setActiveDiffIndex(0);
     setCopied("");
     setStorageNotice("");
+    directEditActiveRef.current = false;
+    if (directEditTimerRef.current) window.clearTimeout(directEditTimerRef.current);
     Object.values(STORAGE_KEYS).forEach((key) => {
       try {
         localStorage.removeItem(key);
@@ -818,17 +1003,18 @@ const JSONCompare = () => {
             </ToolbarButton>
           ))}
           <span className="mx-2 h-6 border-l border-slate-800" />
-          <ToolbarButton onClick={() => { setLeftText(stringify(sampleLeft, 2)); setRightText(stringify(sampleRight, 2)); }}>Sample</ToolbarButton>
+          <ToolbarButton onClick={() => { commitText(stringify(sampleLeft, 2)); setRightText(stringify(sampleRight, 2)); }}>Sample</ToolbarButton>
           <ToolbarButton onClick={() => leftFileRef.current?.click()}><Upload className="h-4 w-4" />Import</ToolbarButton>
           <ToolbarButton onClick={() => downloadText("data.json", leftText || "null")}><Download className="h-4 w-4" />Export</ToolbarButton>
           <ToolbarButton onClick={() => copyText(leftText, "left")}><Copy className="h-4 w-4" />{copied === "left" ? "Copied" : "Copy"}</ToolbarButton>
           <ToolbarButton onClick={undo} disabled={!history.length}><Undo2 className="h-4 w-4" /></ToolbarButton>
           <ToolbarButton onClick={redo} disabled={!future.length}><Redo2 className="h-4 w-4" /></ToolbarButton>
           <ToolbarButton onClick={() => leftParsed.value !== null && commitValue(sortKeysDeep(leftParsed.value))}>Sort keys</ToolbarButton>
-          <ToolbarButton onClick={() => setLeftText(repairJSONish(leftText))}><Wand2 className="h-4 w-4" />Repair</ToolbarButton>
-          <ToolbarButton onClick={() => !leftParsed.error && setLeftText(stringify(leftParsed.value, 0))}>Compact</ToolbarButton>
-          <ToolbarButton onClick={() => !leftParsed.error && setLeftText(stringify(leftParsed.value, 2))}>Format</ToolbarButton>
-          <ToolbarButton onClick={runCompare} active><GitCompare className="h-4 w-4" />Compare</ToolbarButton>
+          <ToolbarButton onClick={() => commitText(repairJSONish(leftText))}><Wand2 className="h-4 w-4" />Repair</ToolbarButton>
+          <ToolbarButton onClick={() => !leftParsed.error && commitText(stringify(leftParsed.value, 0))}>Compact</ToolbarButton>
+          <ToolbarButton onClick={() => !leftParsed.error && commitText(stringify(leftParsed.value, 2))}>Format</ToolbarButton>
+          <ToolbarButton onClick={runCompare} active disabled={compareStatus.busy}><GitCompare className="h-4 w-4" />{compareStatus.busy ? "Comparing" : "Compare"}</ToolbarButton>
+          {workerStatus.busy && <ToolbarButton onClick={cancelWorkerWork}><X className="h-4 w-4" />Cancel work</ToolbarButton>}
           <ToolbarButton onClick={resetWorkspace}><RotateCcw className="h-4 w-4" />Reset</ToolbarButton>
           <input ref={leftFileRef} type="file" accept=".json,.jsonc,.txt" className="hidden" onChange={(event) => readFile(event, "left")} />
           <input ref={rightFileRef} type="file" accept=".json,.jsonc,.txt" className="hidden" onChange={(event) => readFile(event, "right")} />
@@ -869,12 +1055,13 @@ const JSONCompare = () => {
                 <input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Search tree" className="w-full border border-slate-700 bg-[#0b0d10] py-2 pl-9 pr-3 text-xs text-white outline-none focus:border-cyan-500" />
               </div>
               <div className="space-y-2 text-xs text-slate-400">
-                {isParsingPending && <div className="border border-cyan-900 p-2 text-cyan-200">Parsing after input settles...</div>}
+                {isParsingPending && <div className="border border-cyan-900 p-2 text-cyan-200">{workerStatus.label} {workerStatus.progress ? `${workerStatus.progress}%` : ""}</div>}
                 <div className="border border-slate-800 p-2">Click selects and shows path. Ctrl/Cmd/Shift click toggles multi-select.</div>
                 <div className="border border-slate-800 p-2">Right-click any node for add, edit, duplicate, copy, and remove actions.</div>
-                <div className={`border p-2 ${leftParsed.error ? "border-red-900 text-red-200" : "border-emerald-900 text-emerald-200"}`}>{leftParsed.error ? "Invalid JSON" : `${flattened.length}${flattened.length >= TEXT_ROW_LIMIT ? "+" : ""} projected nodes`}</div>
+                <div className={`border p-2 ${leftParsed.error ? "border-red-900 text-red-200" : "border-emerald-900 text-emerald-200"}`}>{leftParsed.error ? "Invalid JSON" : `${leftParsed.index?.visited || 0}${leftParsed.index?.truncated ? "+" : ""} indexed nodes`}</div>
                 {debouncedSearchTerm.length === 1 && <div className="border border-yellow-900 p-2 text-yellow-200">Search starts after 2 characters.</div>}
-                {matches.size >= SEARCH_RESULT_LIMIT && <div className="border border-yellow-900 p-2 text-yellow-200">Showing first {SEARCH_RESULT_LIMIT} search matches.</div>}
+                {searchResult.status === "working" && <div className="border border-cyan-900 p-2 text-cyan-200">Searching in worker...</div>}
+                {searchResult.truncated && <div className="border border-yellow-900 p-2 text-yellow-200">Showing first {SEARCH_RESULT_LIMIT} search matches.</div>}
               </div>
             </aside>
 
@@ -889,7 +1076,7 @@ const JSONCompare = () => {
                   defaultLanguage="json"
                   theme="vs-dark"
                   value={leftText}
-                  onChange={(value) => setLeftText(value || "")}
+                  onChange={(value) => updateLeftTextFromEditor(value || "")}
                   options={{ minimap: { enabled: false }, fontSize: 13, tabSize: 2, wordWrap: "on", automaticLayout: true, scrollBeyondLastLine: false }}
                 />
               )}
@@ -1025,7 +1212,7 @@ const JSONCompare = () => {
                 <h2 className="text-sm font-semibold text-white">Right JSON</h2>
                 <div className="flex gap-2">
                   <ToolbarButton onClick={() => rightFileRef.current?.click()}><Upload className="h-4 w-4" /></ToolbarButton>
-                  <ToolbarButton onClick={() => { setLeftText(rightText); setRightText(leftText); }}><ArrowLeftRight className="h-4 w-4" /></ToolbarButton>
+                  <ToolbarButton onClick={() => { commitText(rightText); setRightText(leftText); }}><ArrowLeftRight className="h-4 w-4" /></ToolbarButton>
                 </div>
               </div>
               <div className="h-[34rem]">
@@ -1043,7 +1230,8 @@ const JSONCompare = () => {
             </div>
             <div className="xl:col-span-2 border border-slate-800 bg-[#101419] p-3">
               <div className="mb-3 flex flex-wrap items-center gap-2">
-                <ToolbarButton onClick={runCompare} active><GitCompare className="h-4 w-4" />Compare</ToolbarButton>
+                <ToolbarButton onClick={runCompare} active disabled={compareStatus.busy}><GitCompare className="h-4 w-4" />{compareStatus.busy ? "Comparing" : "Compare"}</ToolbarButton>
+                {compareStatus.busy && <ToolbarButton onClick={cancelWorkerWork}><X className="h-4 w-4" />Cancel</ToolbarButton>}
                 <select value={filterType} onChange={(event) => setFilterType(event.target.value)} className="border border-slate-700 bg-[#0b0d10] px-3 py-2 text-xs text-white">
                   <option value="all">All</option>
                   <option value="added">Added</option>
@@ -1054,6 +1242,7 @@ const JSONCompare = () => {
                 <ToolbarButton onClick={() => moveDiff(1)} disabled={!filteredComparison.length}><ArrowDown className="h-4 w-4" />Next</ToolbarButton>
                 <ToolbarButton onClick={() => downloadText("json-patch.json", stringify(patch, 2))}>Patch</ToolbarButton>
                 <ToolbarButton onClick={() => leftParsed.value && downloadText("merged-output.json", stringify(applyDiffToLeft(leftParsed.value, comparison), 2))}>Merged</ToolbarButton>
+                {compareStatus.busy && <span className="text-xs text-cyan-300">{compareStatus.label} {compareStatus.progress ? `${compareStatus.progress}%` : ""}</span>}
               </div>
               {!comparison.length ? <div className="p-6 text-center text-sm text-slate-500">No differences yet, or the documents match.</div> : (
                 <div className="grid gap-3 xl:grid-cols-[320px_minmax(0,1fr)]">
