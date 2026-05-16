@@ -1,6 +1,6 @@
 {
-  "short_name": "JSONSync",
-  "name": "JSONSync - JSON Editor and Compare Workbench",
+  "short_name": "JSONEditor",
+  "name": "JSONEditor - JSON Editor and Compare Workbench",
   "description": "A browser-local JSON editor, formatter, tree viewer, schema validator, query tool, and tree-based compare workbench.",
   "icons": [
     {

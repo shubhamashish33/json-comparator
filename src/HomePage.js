@@ -11,7 +11,7 @@ const HomePage = () => {
         <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
           <button onClick={() => navigate("/compare")} className="flex items-center gap-2 text-left">
             <TerminalSquare className="h-5 w-5 text-cyan-400" />
-            <span className="text-sm font-semibold uppercase text-slate-100">JSONSync</span>
+            <span className="text-sm font-semibold uppercase text-slate-100">JSONEditor</span>
           </button>
           <button
             onClick={() => navigate("/compare")}

@@ -774,7 +774,7 @@ const JSONCompare = () => {
         <div className="mx-auto flex h-14 max-w-[120rem] items-center justify-between px-4">
           <button onClick={() => navigate("/")} className="inline-flex items-center gap-2 text-sm font-semibold uppercase text-white">
             <GitCompare className="h-5 w-5 text-cyan-400" />
-            JSONSync
+            JSONEditor
           </button>
           <button onClick={() => navigate("/")} className="inline-flex items-center gap-2 border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-900">
             <Home className="h-4 w-4" /> Home

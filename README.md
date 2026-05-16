@@ -1,8 +1,8 @@
-# JSONSync
+# JSONEditor
 
-JSONSync is a browser-local JSON workbench for editing, inspecting, transforming, validating, and comparing JSON documents. The current design is developer-focused: monospace UI, tree-first navigation, separate workspaces for editor/compare/query/schema, and guardrails for larger JSON payloads.
+JSONEditor is a browser-local JSON workbench for editing, inspecting, transforming, validating, and comparing JSON documents. The current design is developer-focused: monospace UI, tree-first navigation, separate workspaces for editor/compare/query/schema, and guardrails for larger JSON payloads.
 
-Live app: https://json-comparator-one.vercel.app/
+Live app: https://jsoneditor.shubhamashish.xyz/
 
 ## What It Does
 
@@ -182,14 +182,14 @@ Important notes:
 
 ## Persistence And Privacy
 
-JSONSync runs in the browser. The app does not send pasted JSON to a backend service.
+JSONEditor runs in the browser. The app does not send pasted JSON to a backend service.
 
 Persistence behavior:
 
 - Small JSON documents may be restored from `localStorage`.
 - Large JSON documents are kept in memory only.
 - Large documents show a warning that they will not be restored after refresh.
-- Reset clears app workspace state and JSONSync localStorage keys.
+- Reset clears app workspace state and JSONEditor localStorage keys.
 
 If old localStorage data causes a stale state, run this in DevTools:
 
@@ -215,7 +215,7 @@ The `Reset` toolbar action clears:
 - Query / transform state
 - Fetch URL
 - Storage notices
-- JSONSync localStorage entries
+- JSONEditor localStorage entries
 
 ## Local Development
 

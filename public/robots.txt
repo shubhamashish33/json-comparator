@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://json-comparator-one.vercel.app/sitemap.xml
+Sitemap: https://jsoneditor.shubhamashish.xyz/sitemap.xml
