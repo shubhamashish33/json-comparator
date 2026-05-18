@@ -243,23 +243,29 @@ const valueType = (value) => {
   return typeof value;
 };
 
-const collectTreeEntries = (value, visibleCount) => {
+const collectTreeEntries = (value, visibleCount, forcedKey) => {
   if (!value || typeof value !== "object") return { entries: [], childCount: 0 };
   if (Array.isArray(value)) {
+    const entries = Array.from({ length: Math.min(value.length, visibleCount) }, (_, index) => [index, value[index]]);
+    const forcedIndex = forcedKey !== null && forcedKey !== undefined ? Number(forcedKey) : -1;
+    if (Number.isInteger(forcedIndex) && forcedIndex >= visibleCount && forcedIndex < value.length) entries.push([forcedIndex, value[forcedIndex]]);
     return {
-      entries: Array.from({ length: Math.min(value.length, visibleCount) }, (_, index) => [index, value[index]]),
+      entries,
       childCount: value.length,
     };
   }
 
   const entries = [];
   let childCount = 0;
+  let forcedEntry = null;
   for (const key in value) {
     if (Object.prototype.hasOwnProperty.call(value, key)) {
       if (entries.length < visibleCount) entries.push([key, value[key]]);
+      else if (key === forcedKey) forcedEntry = [key, value[key]];
       childCount += 1;
     }
   }
+  if (forcedEntry && !entries.some(([key]) => key === forcedKey)) entries.push(forcedEntry);
   return { entries, childCount };
 };
 
@@ -383,10 +389,18 @@ const TreeNode = ({
   const isArray = Array.isArray(value);
   const selected = selectedPath === path || selectedPaths.has(path);
   const matched = matches.has(path);
-  const { entries, childCount } = collectTreeEntries(value, visibleCount);
+  const pathParts = parsePath(path);
+  const selectedParts = parsePath(selectedPath);
+  const isSelectedAncestor = selectedPath && selectedParts.length > pathParts.length && pathParts.every((part, index) => part === selectedParts[index]);
+  const forcedKey = isSelectedAncestor ? selectedParts[pathParts.length] : null;
+  const { entries, childCount } = collectTreeEntries(value, visibleCount, forcedKey);
   const preview = isContainer
     ? isArray ? `[${open ? "" : `${value.length} items`}]` : `{${open ? "" : `${childCount} keys`}}`
     : stringify(value, 0);
+
+  useEffect(() => {
+    if (isContainer && isSelectedAncestor) setOpen(true);
+  }, [isContainer, isSelectedAncestor]);
 
   return (
     <div className="text-sm">
@@ -440,9 +454,20 @@ const TreeNode = ({
 };
 
 const TreeView = ({ value, selectedPath, selectedPaths, matches, onSelect, onContextMenu }) => {
+  const treeRef = useRef(null);
+  useEffect(() => {
+    if (!selectedPath) return;
+    const timer = window.setTimeout(() => {
+      const nodes = treeRef.current?.querySelectorAll("[data-path]");
+      const target = nodes ? Array.from(nodes).find((node) => node.dataset.path === selectedPath) : null;
+      target?.scrollIntoView({ block: "center" });
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [selectedPath]);
+
   if (value === null || value === undefined) return <div className="p-8 text-center text-sm text-slate-500">Paste or load JSON to start.</div>;
   return (
-    <div className="h-full overflow-auto bg-[#0c0f13] p-2">
+    <div ref={treeRef} className="h-full overflow-auto bg-[#0c0f13] p-2">
       <TreeNode
         nodeKey="root"
         value={value}
@@ -522,6 +547,7 @@ const JSONCompare = () => {
   const directEditTimerRef = useRef(null);
   const [workspaceTab, setWorkspaceTab] = useState("editor");
   const [editorMode, setEditorMode] = useState("tree");
+  const [compareMode, setCompareMode] = useState("text");
   const [leftText, setLeftText] = useState("");
   const [rightText, setRightText] = useState("");
   const [schemaText, setSchemaText] = useState("");
@@ -532,6 +558,7 @@ const JSONCompare = () => {
   const [selectedPath, setSelectedPath] = useState("");
   const [selectedPaths, setSelectedPaths] = useState(new Set());
   const [searchTerm, setSearchTerm] = useState("");
+  const [activeSearchIndex, setActiveSearchIndex] = useState(0);
   const [searchResult, setSearchResult] = useState({ matches: [], visited: 0, truncated: false, status: "idle" });
   const [workerStatus, setWorkerStatus] = useState({ busy: false, label: "Idle", progress: 0 });
   const [compareStatus, setCompareStatus] = useState({ busy: false, label: "Idle", progress: 0 });
@@ -654,6 +681,7 @@ const JSONCompare = () => {
     schemaText !== debouncedSchemaText ||
     [leftParsed, rightParsed, schemaParsed].some((parsed) => parsed.status === "queued" || parsed.status === "working");
   const matches = useMemo(() => new Set(searchResult.matches), [searchResult.matches]);
+  const searchMatches = searchResult.matches || [];
   const flattened = leftParsed.index?.rows || [];
   const selectedValue = useMemo(() => selectedPath ? getValueAtPath(leftParsed.value, selectedPath) : leftParsed.value, [leftParsed.value, selectedPath]);
   const selectedTable = useMemo(() => collectTable(selectedValue), [selectedValue]);
@@ -707,6 +735,10 @@ const JSONCompare = () => {
       stale = true;
     };
   }, [debouncedSearchTerm, leftParsed.error, leftParsed.value, runWorkerTask]);
+
+  useEffect(() => {
+    setActiveSearchIndex(0);
+  }, [debouncedSearchTerm, searchMatches.length]);
 
   useEffect(() => {
     const leftStored = safeSetStorage(STORAGE_KEYS.left, leftText);
@@ -812,6 +844,23 @@ const JSONCompare = () => {
     });
   };
 
+  const jumpToSearchMatch = (index) => {
+    if (!searchMatches.length) return;
+    const nextIndex = (index + searchMatches.length) % searchMatches.length;
+    const path = searchMatches[nextIndex] === "root" ? "" : searchMatches[nextIndex];
+    setActiveSearchIndex(nextIndex);
+    setEditorMode("tree");
+    selectPath(path);
+  };
+
+  const handleSearchKeyDown = (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    const currentMatch = searchMatches[activeSearchIndex] === "root" ? "" : searchMatches[activeSearchIndex];
+    const offset = selectedPath === currentMatch ? 1 : 0;
+    jumpToSearchMatch(event.shiftKey ? activeSearchIndex - 1 : activeSearchIndex + offset);
+  };
+
   const openContext = (path, event) => {
     event.preventDefault();
     setSelectedPath(path);
@@ -882,6 +931,7 @@ const JSONCompare = () => {
       setComparison(diffs);
       setActiveDiffIndex(0);
       if (diffs[0]?.path) setSelectedPath(diffs[0].path);
+      setCompareMode("tree");
       setCompareStatus({ busy: false, label: "Ready", progress: 100 });
     } catch (error) {
       if (error.message !== "Canceled") setCompareStatus({ busy: false, label: error.message || "Compare failed", progress: 0 });
@@ -942,6 +992,7 @@ const JSONCompare = () => {
   const resetWorkspace = () => {
     setWorkspaceTab("editor");
     setEditorMode("tree");
+    setCompareMode("text");
     setLeftText("");
     setRightText("");
     setSchemaText("");
@@ -949,6 +1000,7 @@ const JSONCompare = () => {
     setSelectedPath("");
     setSelectedPaths(new Set());
     setSearchTerm("");
+    setActiveSearchIndex(0);
     setContextMenu(null);
     setDialog(null);
     setHistory([]);
@@ -1013,7 +1065,6 @@ const JSONCompare = () => {
           <ToolbarButton onClick={() => commitText(repairJSONish(leftText))}><Wand2 className="h-4 w-4" />Repair</ToolbarButton>
           <ToolbarButton onClick={() => !leftParsed.error && commitText(stringify(leftParsed.value, 0))}>Compact</ToolbarButton>
           <ToolbarButton onClick={() => !leftParsed.error && commitText(stringify(leftParsed.value, 2))}>Format</ToolbarButton>
-          <ToolbarButton onClick={runCompare} active disabled={compareStatus.busy}><GitCompare className="h-4 w-4" />{compareStatus.busy ? "Comparing" : "Compare"}</ToolbarButton>
           {workerStatus.busy && <ToolbarButton onClick={cancelWorkerWork}><X className="h-4 w-4" />Cancel work</ToolbarButton>}
           <ToolbarButton onClick={resetWorkspace}><RotateCcw className="h-4 w-4" />Reset</ToolbarButton>
           <input ref={leftFileRef} type="file" accept=".json,.jsonc,.txt" className="hidden" onChange={(event) => readFile(event, "left")} />
@@ -1052,8 +1103,30 @@ const JSONCompare = () => {
               </div>
               <div className="relative mb-3">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-                <input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Search tree" className="w-full border border-slate-700 bg-[#0b0d10] py-2 pl-9 pr-3 text-xs text-white outline-none focus:border-cyan-500" />
+                <input
+                  value={searchTerm}
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                  onKeyDown={handleSearchKeyDown}
+                  placeholder="Search tree"
+                  className="w-full border border-slate-700 bg-[#0b0d10] py-2 pl-9 pr-3 text-xs text-white outline-none focus:border-cyan-500"
+                />
               </div>
+              {searchMatches.length > 0 && (
+                <div className="mb-3 max-h-52 overflow-auto border border-slate-800 bg-[#0b0d10] text-xs">
+                  <div className="sticky top-0 border-b border-slate-800 bg-[#0b0d10] px-2 py-1.5 text-slate-400">
+                    {searchMatches.length}{searchResult.truncated ? "+" : ""} matches. Enter jumps.
+                  </div>
+                  {searchMatches.slice(0, 100).map((path, index) => (
+                    <button
+                      key={`${path}-${index}`}
+                      onClick={() => jumpToSearchMatch(index)}
+                      className={`block w-full truncate px-2 py-1.5 text-left hover:bg-slate-800 ${index === activeSearchIndex ? "bg-cyan-500/15 text-cyan-200" : "text-slate-300"}`}
+                    >
+                      {path}
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="space-y-2 text-xs text-slate-400">
                 {isParsingPending && <div className="border border-cyan-900 p-2 text-cyan-200">{workerStatus.label} {workerStatus.progress ? `${workerStatus.progress}%` : ""}</div>}
                 <div className="border border-slate-800 p-2">Click selects and shows path. Ctrl/Cmd/Shift click toggles multi-select.</div>
@@ -1189,13 +1262,27 @@ const JSONCompare = () => {
 
         {workspaceTab === "compare" && (
           <section className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+            <div className="xl:col-span-2 flex flex-wrap items-center gap-2 border border-slate-800 bg-[#101419] p-2">
+              <button onClick={() => setCompareMode("text")} className={`inline-flex items-center gap-2 border px-3 py-2 text-xs ${compareMode === "text" ? "border-cyan-500 bg-cyan-500 text-slate-950" : "border-slate-700 text-slate-300 hover:bg-slate-900"}`}><Code2 className="h-4 w-4" />Text</button>
+              <button onClick={() => setCompareMode("tree")} className={`inline-flex items-center gap-2 border px-3 py-2 text-xs ${compareMode === "tree" ? "border-cyan-500 bg-cyan-500 text-slate-950" : "border-slate-700 text-slate-300 hover:bg-slate-900"}`}><ListTree className="h-4 w-4" />Tree</button>
+              <span className="text-xs text-slate-500">Use Text to paste/edit both sides. Compare switches to Tree for review.</span>
+            </div>
             <div className="border border-slate-800 bg-[#101419]">
               <div className="flex items-center justify-between border-b border-slate-800 p-3">
                 <h2 className="text-sm font-semibold text-white">Left JSON</h2>
                 <ToolbarButton onClick={() => leftFileRef.current?.click()}><Upload className="h-4 w-4" /></ToolbarButton>
               </div>
               <div className="h-[34rem]">
-                {leftParsed.error ? <div className="p-3"><ErrorMessage error={leftParsed.error} /></div> : (
+                {compareMode === "text" ? (
+                  <Editor
+                    height="100%"
+                    defaultLanguage="json"
+                    theme="vs-dark"
+                    value={leftText}
+                    onChange={(value) => updateLeftTextFromEditor(value || "")}
+                    options={{ minimap: { enabled: false }, fontSize: 13, tabSize: 2, wordWrap: "on", automaticLayout: true, scrollBeyondLastLine: false }}
+                  />
+                ) : leftParsed.error ? <div className="p-3"><ErrorMessage error={leftParsed.error} /></div> : (
                   <TreeView
                     value={leftParsed.value}
                     selectedPath={activeDiff?.path || selectedPath}
@@ -1216,7 +1303,16 @@ const JSONCompare = () => {
                 </div>
               </div>
               <div className="h-[34rem]">
-                {rightParsed.error ? <div className="p-3"><ErrorMessage error={rightParsed.error} /></div> : (
+                {compareMode === "text" ? (
+                  <Editor
+                    height="100%"
+                    defaultLanguage="json"
+                    theme="vs-dark"
+                    value={rightText}
+                    onChange={(value) => setRightText(value || "")}
+                    options={{ minimap: { enabled: false }, fontSize: 13, tabSize: 2, wordWrap: "on", automaticLayout: true, scrollBeyondLastLine: false }}
+                  />
+                ) : rightParsed.error ? <div className="p-3"><ErrorMessage error={rightParsed.error} /></div> : (
                   <TreeView
                     value={rightParsed.value}
                     selectedPath={activeDiff?.path || selectedPath}
