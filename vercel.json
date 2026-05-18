@@ -4,6 +4,12 @@
   "github": {
     "autoDeployment": false
   },
+  "git": {
+    "deploymentEnabled": {
+      "main": true,
+      "*": false
+    }
+  },
   "builds": [
     {
       "src": "package.json",
