@@ -15,6 +15,7 @@ import {
   Eraser,
   FileJson,
   GitCompare,
+  HelpCircle,
   Home,
   Link2,
   ListTree,
@@ -546,7 +547,7 @@ const JSONCompare = () => {
   const directEditActiveRef = useRef(false);
   const directEditTimerRef = useRef(null);
   const [workspaceTab, setWorkspaceTab] = useState("editor");
-  const [editorMode, setEditorMode] = useState("tree");
+  const [editorMode, setEditorMode] = useState("code");
   const [compareMode, setCompareMode] = useState("text");
   const [leftText, setLeftText] = useState("");
   const [rightText, setRightText] = useState("");
@@ -849,7 +850,7 @@ const JSONCompare = () => {
     const nextIndex = (index + searchMatches.length) % searchMatches.length;
     const path = searchMatches[nextIndex] === "root" ? "" : searchMatches[nextIndex];
     setActiveSearchIndex(nextIndex);
-    setEditorMode("tree");
+    setEditorMode("code");
     selectPath(path);
   };
 
@@ -991,7 +992,7 @@ const JSONCompare = () => {
 
   const resetWorkspace = () => {
     setWorkspaceTab("editor");
-    setEditorMode("tree");
+    setEditorMode("code");
     setCompareMode("text");
     setLeftText("");
     setRightText("");
@@ -1041,9 +1042,14 @@ const JSONCompare = () => {
             <GitCompare className="h-5 w-5 text-cyan-400" />
             JSONEditor
           </button>
-          <button onClick={() => navigate("/")} className="inline-flex items-center gap-2 border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-900">
-            <Home className="h-4 w-4" /> Home
-          </button>
+          <div className="flex gap-2">
+            <button onClick={() => navigate("/help")} className="inline-flex items-center gap-2 border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-900">
+              <HelpCircle className="h-4 w-4" /> Help
+            </button>
+            <button onClick={() => navigate("/")} className="inline-flex items-center gap-2 border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-900">
+              <Home className="h-4 w-4" /> Home
+            </button>
+          </div>
         </div>
       </nav>
 

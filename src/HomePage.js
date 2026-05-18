@@ -1,6 +1,6 @@
 import React from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowRight, Braces, GitCompare, Lock, TerminalSquare } from "lucide-react";
+import { ArrowRight, Braces, GitCompare, HelpCircle, Lock, TerminalSquare } from "lucide-react";
 
 const HomePage = () => {
   const navigate = useNavigate();
@@ -13,13 +13,22 @@ const HomePage = () => {
             <TerminalSquare className="h-5 w-5 text-cyan-400" />
             <span className="text-sm font-semibold uppercase text-slate-100">JSONEditor</span>
           </button>
-          <button
-            onClick={() => navigate("/compare")}
-            className="inline-flex items-center gap-2 rounded border border-cyan-500/40 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-100 hover:bg-cyan-500/15"
-          >
-            Open workspace
-            <ArrowRight className="h-4 w-4" />
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => navigate("/help")}
+              className="inline-flex items-center gap-2 rounded border border-slate-700 px-3 py-2 text-sm text-slate-200 hover:bg-slate-900"
+            >
+              <HelpCircle className="h-4 w-4" />
+              Help
+            </button>
+            <button
+              onClick={() => navigate("/compare")}
+              className="inline-flex items-center gap-2 rounded border border-cyan-500/40 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-100 hover:bg-cyan-500/15"
+            >
+              Open workspace
+              <ArrowRight className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       </header>
 
