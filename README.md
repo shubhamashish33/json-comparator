@@ -1,6 +1,6 @@
 # JSONEditor
 
-JSONEditor is a browser-local JSON workbench for editing, inspecting, transforming, validating, and comparing JSON documents. The current design is developer-focused: monospace UI, tree-first navigation, separate workspaces for editor/compare/query/schema, and guardrails for larger JSON payloads.
+JSONEditor is a browser-local JSON workbench for editing, inspecting, transforming, validating, and comparing JSON documents. The current design is developer-focused: monospace UI, code-first editing, tree navigation when needed, separate workspaces for editor/compare/query/schema, and guardrails for larger JSON payloads.
 
 <img width="1414" height="755" alt="image" src="https://github.com/user-attachments/assets/e05507c0-30a7-4b92-8192-facb7e29f752" />
 
@@ -12,6 +12,7 @@ JSONEditor is a browser-local JSON workbench for editing, inspecting, transformi
 - Compare two JSON documents with tree-based next/previous diff navigation.
 - Query paths and preview JavaScript-style transforms locally.
 - Validate JSON against a JSON Schema.
+- Open a built-in Help page for Table, Query, Schema, Compare, and large JSON workflows.
 - Import, export, copy, format, compact, repair, sort keys, and reset the workspace.
 - Keep JSON processing local in the browser.
 
@@ -23,8 +24,8 @@ The editor workspace is the main mode for working with one JSON document.
 
 Available views:
 
+- `Code`: default Monaco JSON editor for raw editing and paste workflows.
 - `Tree`: expandable JSON tree with path-aware selection.
-- `Code`: Monaco JSON editor for raw editing.
 - `Text`: flattened path/type/value projection capped for large files.
 - `Table`: tabular view for arrays of objects.
 
@@ -33,6 +34,7 @@ Tree interactions:
 - Click a node to select it and show its path.
 - `Ctrl`/`Cmd`/`Shift` click toggles multi-select.
 - Right-click a node for context actions.
+- Search results appear in the sidebar; click a result or press `Enter` to jump through matches.
 - Large arrays/objects are paged in chunks instead of rendering every child at once.
 
 Node actions:
@@ -55,7 +57,6 @@ Toolbar actions:
 - Repair JSON-ish input
 - Compact JSON
 - Format JSON
-- Compare
 - Reset workspace
 
 ### Table Mode
@@ -88,15 +89,16 @@ For performance, Table mode renders a capped projection:
 
 ### Compare
 
-Comparison is tree-based instead of list-heavy.
+Comparison uses a paired Text/Tree workflow instead of a separate input area and a separate output area.
 
 How it works:
 
-- Load or paste left and right JSON documents.
+- Open Compare and use `Text` mode to paste or edit left and right JSON in Monaco editors.
 - Click `Compare`.
+- Compare switches to `Tree` mode automatically.
 - Both sides render as paged trees.
 - Diff paths are highlighted in the trees.
-- Use `Prev` / `Next` to move through changes one at a time.
+- Use the sticky top compare bar for `Prev` / `Next`, filtering, patch export, and merged export.
 - The active diff panel shows path, type, and left/right value previews.
 
 Diff types:
@@ -118,6 +120,16 @@ Exports:
 
 - JSON Patch
 - Merged output
+
+### Help
+
+The Help page is available from the top navigation. It explains the workflows that need more context:
+
+- Table mode and nested arrays of objects.
+- Query path lookup and transform examples.
+- Lightweight Schema validation.
+- Compare Text/Tree workflow.
+- Large JSON usage tips.
 
 ### Query And Transform
 
@@ -171,10 +183,14 @@ Current guardrails:
 - If worker processing fails or times out, parsing falls back to the browser thread instead of leaving the workspace blank.
 - Tree rendering is paged in chunks of 200 children.
 - Tree child collection avoids expanding every object key just to render the first visible page.
+- Sidebar search results can jump and scroll to matching paths in large trees.
 - Text mode is capped to 5000 projected rows.
 - Table mode is capped to 1000 rows.
 - Search starts after 2 characters and caps at 500 matches.
 - Diff results are navigated one at a time instead of rendering a huge list.
+- Compare navigation controls stay in the sticky top compare bar so Prev/Next remain accessible while reviewing large trees.
+- The main toolbar uses horizontal scrolling on smaller screens instead of wrapping controls into unstable rows.
+- A fixed scroll-to-top control is available for long JSON pages.
 - Large JSON is not written to `localStorage`.
 - Undo history is disabled for very large documents to avoid large memory growth.
 
@@ -242,6 +258,8 @@ The `Reset` toolbar action clears:
 - Fetch URL
 - Storage notices
 - JSONEditor localStorage entries
+
+After reset, the editor returns to `Code` mode.
 
 ## Local Development
 
