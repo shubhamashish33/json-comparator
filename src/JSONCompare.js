@@ -364,7 +364,7 @@ const ToolbarButton = ({ children, onClick, disabled, active, title }) => (
     title={title}
     disabled={disabled}
     onClick={onClick}
-    className={`inline-flex items-center gap-2 border px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${
+    className={`inline-flex shrink-0 items-center gap-2 border px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${
       active ? "border-cyan-500 bg-cyan-500 text-slate-950" : "border-slate-700 bg-[#101419] text-slate-200 hover:bg-slate-900"
     }`}
   >
@@ -1048,13 +1048,13 @@ const JSONCompare = () => {
       </nav>
 
       <main className="mx-auto max-w-[120rem] px-4 py-4">
-        <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-slate-800 pb-3">
+        <div className="mb-3 flex max-w-full flex-nowrap items-center gap-2 overflow-x-auto border-b border-slate-800 pb-3">
           {["editor", "compare", "query", "schema"].map((tab) => (
             <ToolbarButton key={tab} active={workspaceTab === tab} onClick={() => setWorkspaceTab(tab)}>
               {tab}
             </ToolbarButton>
           ))}
-          <span className="mx-2 h-6 border-l border-slate-800" />
+          <span className="mx-2 h-6 shrink-0 border-l border-slate-800" />
           <ToolbarButton onClick={() => { commitText(stringify(sampleLeft, 2)); setRightText(stringify(sampleRight, 2)); }}>Sample</ToolbarButton>
           <ToolbarButton onClick={() => leftFileRef.current?.click()}><Upload className="h-4 w-4" />Import</ToolbarButton>
           <ToolbarButton onClick={() => downloadText("data.json", leftText || "null")}><Download className="h-4 w-4" />Export</ToolbarButton>
@@ -1262,10 +1262,24 @@ const JSONCompare = () => {
 
         {workspaceTab === "compare" && (
           <section className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-            <div className="xl:col-span-2 flex flex-wrap items-center gap-2 border border-slate-800 bg-[#101419] p-2">
+            <div className="sticky top-14 z-40 xl:col-span-2 flex flex-wrap items-center gap-2 border border-slate-800 bg-[#101419] p-2 shadow-lg shadow-black/20">
               <button onClick={() => setCompareMode("text")} className={`inline-flex items-center gap-2 border px-3 py-2 text-xs ${compareMode === "text" ? "border-cyan-500 bg-cyan-500 text-slate-950" : "border-slate-700 text-slate-300 hover:bg-slate-900"}`}><Code2 className="h-4 w-4" />Text</button>
               <button onClick={() => setCompareMode("tree")} className={`inline-flex items-center gap-2 border px-3 py-2 text-xs ${compareMode === "tree" ? "border-cyan-500 bg-cyan-500 text-slate-950" : "border-slate-700 text-slate-300 hover:bg-slate-900"}`}><ListTree className="h-4 w-4" />Tree</button>
-              <span className="text-xs text-slate-500">Use Text to paste/edit both sides. Compare switches to Tree for review.</span>
+              <span className="hidden text-xs text-slate-500 md:inline">Use Text to paste/edit both sides. Compare switches to Tree for review.</span>
+              <span className="mx-1 h-6 border-l border-slate-800" />
+              <ToolbarButton onClick={runCompare} active disabled={compareStatus.busy}><GitCompare className="h-4 w-4" />{compareStatus.busy ? "Comparing" : "Compare"}</ToolbarButton>
+              {compareStatus.busy && <ToolbarButton onClick={cancelWorkerWork}><X className="h-4 w-4" />Cancel</ToolbarButton>}
+              <select value={filterType} onChange={(event) => setFilterType(event.target.value)} className="shrink-0 border border-slate-700 bg-[#0b0d10] px-3 py-2 text-xs text-white">
+                <option value="all">All</option>
+                <option value="added">Added</option>
+                <option value="removed">Removed</option>
+                <option value="modified">Modified</option>
+              </select>
+              <ToolbarButton onClick={() => moveDiff(-1)} disabled={!filteredComparison.length}><ArrowUp className="h-4 w-4" />Prev</ToolbarButton>
+              <ToolbarButton onClick={() => moveDiff(1)} disabled={!filteredComparison.length}><ArrowDown className="h-4 w-4" />Next</ToolbarButton>
+              <ToolbarButton onClick={() => downloadText("json-patch.json", stringify(patch, 2))}>Patch</ToolbarButton>
+              <ToolbarButton onClick={() => leftParsed.value && downloadText("merged-output.json", stringify(applyDiffToLeft(leftParsed.value, comparison), 2))}>Merged</ToolbarButton>
+              {compareStatus.busy && <span className="text-xs text-cyan-300">{compareStatus.label} {compareStatus.progress ? `${compareStatus.progress}%` : ""}</span>}
             </div>
             <div className="border border-slate-800 bg-[#101419]">
               <div className="flex items-center justify-between border-b border-slate-800 p-3">
@@ -1325,21 +1339,6 @@ const JSONCompare = () => {
               </div>
             </div>
             <div className="xl:col-span-2 border border-slate-800 bg-[#101419] p-3">
-              <div className="mb-3 flex flex-wrap items-center gap-2">
-                <ToolbarButton onClick={runCompare} active disabled={compareStatus.busy}><GitCompare className="h-4 w-4" />{compareStatus.busy ? "Comparing" : "Compare"}</ToolbarButton>
-                {compareStatus.busy && <ToolbarButton onClick={cancelWorkerWork}><X className="h-4 w-4" />Cancel</ToolbarButton>}
-                <select value={filterType} onChange={(event) => setFilterType(event.target.value)} className="border border-slate-700 bg-[#0b0d10] px-3 py-2 text-xs text-white">
-                  <option value="all">All</option>
-                  <option value="added">Added</option>
-                  <option value="removed">Removed</option>
-                  <option value="modified">Modified</option>
-                </select>
-                <ToolbarButton onClick={() => moveDiff(-1)} disabled={!filteredComparison.length}><ArrowUp className="h-4 w-4" />Prev</ToolbarButton>
-                <ToolbarButton onClick={() => moveDiff(1)} disabled={!filteredComparison.length}><ArrowDown className="h-4 w-4" />Next</ToolbarButton>
-                <ToolbarButton onClick={() => downloadText("json-patch.json", stringify(patch, 2))}>Patch</ToolbarButton>
-                <ToolbarButton onClick={() => leftParsed.value && downloadText("merged-output.json", stringify(applyDiffToLeft(leftParsed.value, comparison), 2))}>Merged</ToolbarButton>
-                {compareStatus.busy && <span className="text-xs text-cyan-300">{compareStatus.label} {compareStatus.progress ? `${compareStatus.progress}%` : ""}</span>}
-              </div>
               {!comparison.length ? <div className="p-6 text-center text-sm text-slate-500">No differences yet, or the documents match.</div> : (
                 <div className="grid gap-3 xl:grid-cols-[320px_minmax(0,1fr)]">
                   <div className="border border-slate-800 bg-[#0c0f13] p-3 text-xs">
@@ -1388,6 +1387,14 @@ const JSONCompare = () => {
           <button onClick={() => removePaths(selectedPaths.size ? selectedPaths : new Set([contextMenu.path]))} className="block w-full px-3 py-2 text-left text-red-200 hover:bg-red-950/50">Remove selected</button>
         </div>
       )}
+
+      <button
+        onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+        title="Scroll to top"
+        className="fixed bottom-4 right-4 z-50 inline-flex h-10 w-10 items-center justify-center border border-slate-700 bg-[#101419] text-slate-200 shadow-xl shadow-black/30 hover:border-cyan-500 hover:text-cyan-300"
+      >
+        <ArrowUp className="h-4 w-4" />
+      </button>
 
       {dialog && <NodeDialog mode={dialog.mode} node={dialog.node} parentPath={dialog.parentPath} onClose={() => setDialog(null)} onSave={saveDialog} />}
     </div>
