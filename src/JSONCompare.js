@@ -850,7 +850,7 @@ const JSONCompare = () => {
     const nextIndex = (index + searchMatches.length) % searchMatches.length;
     const path = searchMatches[nextIndex] === "root" ? "" : searchMatches[nextIndex];
     setActiveSearchIndex(nextIndex);
-    setEditorMode("code");
+    setEditorMode("tree");
     selectPath(path);
   };
 
@@ -1125,6 +1125,7 @@ const JSONCompare = () => {
                   {searchMatches.slice(0, 100).map((path, index) => (
                     <button
                       key={`${path}-${index}`}
+                      title={path}
                       onClick={() => jumpToSearchMatch(index)}
                       className={`block w-full truncate px-2 py-1.5 text-left hover:bg-slate-800 ${index === activeSearchIndex ? "bg-cyan-500/15 text-cyan-200" : "text-slate-300"}`}
                     >
