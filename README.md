@@ -1,6 +1,6 @@
 # JSONEditor
 
-JSONEditor is a browser-local JSON workbench for editing, inspecting, transforming, validating, and comparing JSON documents. The current design is developer-focused: monospace UI, code-first editing, tree navigation when needed, separate workspaces for editor/compare/query/schema, and guardrails for larger JSON payloads.
+JSONEditor is a browser-local JSON workbench for editing, inspecting, transforming, and comparing JSON documents. The current design is developer-focused: monospace UI, code-first editing, tree navigation when needed, separate workspaces for editor/compare/query, and guardrails for larger JSON payloads.
 
 <img width="1414" height="755" alt="image" src="https://github.com/user-attachments/assets/e05507c0-30a7-4b92-8192-facb7e29f752" />
 
@@ -11,8 +11,7 @@ JSONEditor is a browser-local JSON workbench for editing, inspecting, transformi
 - Inspect and manipulate nodes from a JSON tree.
 - Compare two JSON documents with tree-based next/previous diff navigation.
 - Query paths and preview JavaScript-style transforms locally.
-- Validate JSON against a JSON Schema.
-- Open a built-in Help page for Table, Query, Schema, Compare, and large JSON workflows.
+- Open a built-in Help page for Table, Query, Compare, and large JSON workflows.
 - Import, export, copy, format, compact, repair, sort keys, and reset the workspace.
 - Keep JSON processing local in the browser.
 
@@ -127,7 +126,6 @@ The Help page is available from the top navigation. It explains the workflows th
 
 - Table mode and nested arrays of objects.
 - Query path lookup and transform examples.
-- Lightweight Schema validation.
 - Compare Text/Tree workflow.
 - Large JSON usage tips.
 
@@ -156,20 +154,6 @@ return value;
 ```
 
 Transform output can be previewed, then applied back to the editor if it parses as JSON.
-
-### Schema
-
-The schema workspace validates the current left JSON document against a JSON Schema.
-
-Supported validation is intentionally lightweight:
-
-- `type`
-- `required`
-- `properties`
-- `items`
-- `enum`
-
-This is not a full JSON Schema engine yet.
 
 ## Large JSON Handling
 
@@ -238,7 +222,6 @@ If old localStorage data causes a stale state, run this in DevTools:
 ```js
 localStorage.removeItem("json-comparator-json1");
 localStorage.removeItem("json-comparator-json2");
-localStorage.removeItem("json-comparator-schema");
 localStorage.removeItem("json-comparator-settings");
 location.reload();
 ```
@@ -249,7 +232,6 @@ The `Reset` toolbar action clears:
 
 - Left JSON
 - Right JSON
-- Schema
 - Compare results
 - Selected paths
 - Search
@@ -302,7 +284,6 @@ npm run build
 - Table mode is a projection for arrays of objects, not a full spreadsheet.
 - Search is capped for performance.
 - Text mode is capped for performance.
-- JSON Schema support is partial.
 - Transform uses a local `Function` constructor, so it should be treated as user-authored local code only.
 - Large JSON comparison can still be CPU-heavy because semantic comparison must traverse the parsed structures.
 - Undo/redo uses full snapshots only below the configured history size limit; very large documents should use explicit structured actions carefully.

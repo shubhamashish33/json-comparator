@@ -1,6 +1,6 @@
 import React from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Braces, Database, FileSearch, GitCompare, ListTree, Table2, Wand2 } from "lucide-react";
+import { ArrowLeft, Braces, FileSearch, GitCompare, ListTree, Table2, Wand2 } from "lucide-react";
 
 const HelpSection = ({ icon: Icon, title, children }) => (
   <section className="border border-slate-800 bg-[#101419] p-5">
@@ -46,7 +46,7 @@ const HelpPage = () => {
           <div className="mb-2 text-xs uppercase text-cyan-300">Quick guide</div>
           <h1 className="text-3xl font-semibold text-white">Use JSONEditor without guessing.</h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-400">
-            Editor and Compare are direct workflows. This page focuses on Table, Query, and Schema because those features are more powerful once the expected input shape is clear.
+            Editor and Compare are direct workflows. This page focuses on Table and Query because those features are more powerful once the expected input shape is clear.
           </p>
         </section>
 
@@ -77,24 +77,6 @@ data.items[10].id`}</CodeBlock>
             <CodeBlock>{`value.users = value.users.filter((user) => user.active);
 return value;`}</CodeBlock>
             <p className="text-slate-500">Transforms are local to your browser, but they are still code you author and run intentionally.</p>
-          </HelpSection>
-
-          <HelpSection icon={Database} title="Schema">
-            <p>Schema checks whether the current left JSON matches a lightweight JSON Schema definition.</p>
-            <CodeBlock>{`{
-  "type": "object",
-  "required": ["id", "email"],
-  "properties": {
-    "id": { "type": "string" },
-    "email": { "type": "string" },
-    "roles": {
-      "type": "array",
-      "items": { "type": "string" }
-    }
-  }
-}`}</CodeBlock>
-            <p>Currently supported: `type`, `required`, `properties`, `items`, and `enum`.</p>
-            <p className="text-slate-500">This is meant for fast shape checks, not full JSON Schema compliance yet.</p>
           </HelpSection>
 
           <HelpSection icon={GitCompare} title="Compare">

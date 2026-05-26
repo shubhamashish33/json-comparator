@@ -36,13 +36,11 @@ import {
   parseJSONDetailed,
   repairJSONish,
   toJsonPatch,
-  validateAgainstSchema,
 } from "./jsonUtils";
 
 const STORAGE_KEYS = {
   left: "json-comparator-json1",
   right: "json-comparator-json2",
-  schema: "json-comparator-schema",
   settings: "json-comparator-settings",
 };
 
@@ -551,10 +549,8 @@ const JSONCompare = () => {
   const [compareMode, setCompareMode] = useState("text");
   const [leftText, setLeftText] = useState("");
   const [rightText, setRightText] = useState("");
-  const [schemaText, setSchemaText] = useState("");
   const [leftParsed, setLeftParsed] = useState(EMPTY_WORKER_PARSE);
   const [rightParsed, setRightParsed] = useState(EMPTY_WORKER_PARSE);
-  const [schemaParsed, setSchemaParsed] = useState(EMPTY_WORKER_PARSE);
   const [settings, setSettings] = useState(defaultSettings);
   const [selectedPath, setSelectedPath] = useState("");
   const [selectedPaths, setSelectedPaths] = useState(new Set());
@@ -579,7 +575,6 @@ const JSONCompare = () => {
 
   const debouncedLeftText = useDebounce(leftText, PARSE_DEBOUNCE_MS);
   const debouncedRightText = useDebounce(rightText, PARSE_DEBOUNCE_MS);
-  const debouncedSchemaText = useDebounce(schemaText, PARSE_DEBOUNCE_MS);
   const debouncedSearchTerm = useDebounce(searchTerm, 250);
   const createWorker = useCallback(() => {
     if (workerRef.current) return workerRef.current;
@@ -643,7 +638,6 @@ const JSONCompare = () => {
     setCompareStatus({ busy: false, label: "Canceled", progress: 0 });
     setLeftParsed((current) => ({ ...current, status: "idle", label: "Canceled", progress: 0 }));
     setRightParsed((current) => ({ ...current, status: "idle", label: "Canceled", progress: 0 }));
-    setSchemaParsed((current) => ({ ...current, status: "idle", label: "Canceled", progress: 0 }));
     setSearchResult((current) => ({ ...current, status: "idle" }));
   }, []);
 
@@ -679,8 +673,7 @@ const JSONCompare = () => {
   const isParsingPending =
     leftText !== debouncedLeftText ||
     rightText !== debouncedRightText ||
-    schemaText !== debouncedSchemaText ||
-    [leftParsed, rightParsed, schemaParsed].some((parsed) => parsed.status === "queued" || parsed.status === "working");
+    [leftParsed, rightParsed].some((parsed) => parsed.status === "queued" || parsed.status === "working");
   const matches = useMemo(() => new Set(searchResult.matches), [searchResult.matches]);
   const searchMatches = searchResult.matches || [];
   const flattened = leftParsed.index?.rows || [];
@@ -688,10 +681,6 @@ const JSONCompare = () => {
   const selectedTable = useMemo(() => collectTable(selectedValue), [selectedValue]);
   const rootTable = useMemo(() => collectTable(leftParsed.value), [leftParsed.value]);
   const table = selectedTable.rows.length ? { ...selectedTable, path: selectedPath } : { ...rootTable, path: "" };
-  const schemaErrors = useMemo(() => {
-    if (!leftParsed.value || !schemaText.trim() || schemaParsed.error) return [];
-    return validateAgainstSchema(leftParsed.value, schemaParsed.value);
-  }, [leftParsed.value, schemaParsed.error, schemaParsed.value, schemaText]);
   const filteredComparison = useMemo(() => comparison.filter((diff) => filterType === "all" || diff.type === filterType), [comparison, filterType]);
   const patch = useMemo(() => toJsonPatch(comparison), [comparison]);
   const diffPathSet = useMemo(() => new Set(filteredComparison.map((diff) => diff.path)), [filteredComparison]);
@@ -701,7 +690,6 @@ const JSONCompare = () => {
     try {
       setLeftText(localStorage.getItem(STORAGE_KEYS.left) || "");
       setRightText(localStorage.getItem(STORAGE_KEYS.right) || "");
-      setSchemaText(localStorage.getItem(STORAGE_KEYS.schema) || "");
       setSettings({ ...defaultSettings, ...JSON.parse(localStorage.getItem(STORAGE_KEYS.settings) || "{}") });
     } catch {
       // Ignore corrupted local storage.
@@ -710,7 +698,6 @@ const JSONCompare = () => {
 
   useEffect(() => parseInWorker(debouncedLeftText, setLeftParsed), [debouncedLeftText, parseInWorker]);
   useEffect(() => parseInWorker(debouncedRightText, setRightParsed), [debouncedRightText, parseInWorker]);
-  useEffect(() => parseInWorker(debouncedSchemaText, setSchemaParsed), [debouncedSchemaText, parseInWorker]);
 
   useEffect(() => {
     let stale = false;
@@ -744,14 +731,13 @@ const JSONCompare = () => {
   useEffect(() => {
     const leftStored = safeSetStorage(STORAGE_KEYS.left, leftText);
     const rightStored = safeSetStorage(STORAGE_KEYS.right, rightText);
-    safeSetStorage(STORAGE_KEYS.schema, schemaText);
     safeSetStorageJSON(STORAGE_KEYS.settings, settings);
     if ((leftText && !leftStored) || (rightText && !rightStored)) {
       setStorageNotice("Large JSON is kept in memory only and will not be restored after refresh.");
     } else {
       setStorageNotice("");
     }
-  }, [leftText, rightText, schemaText, settings]);
+  }, [leftText, rightText, settings]);
 
   useEffect(() => {
     const close = () => setContextMenu(null);
@@ -996,7 +982,6 @@ const JSONCompare = () => {
     setCompareMode("text");
     setLeftText("");
     setRightText("");
-    setSchemaText("");
     setSettings(defaultSettings);
     setSelectedPath("");
     setSelectedPaths(new Set());
@@ -1055,7 +1040,7 @@ const JSONCompare = () => {
 
       <main className="mx-auto max-w-[120rem] px-4 py-4">
         <div className="mb-3 flex max-w-full flex-nowrap items-center gap-2 overflow-x-auto border-b border-slate-800 pb-3">
-          {["editor", "compare", "query", "schema"].map((tab) => (
+          {["editor", "compare", "query"].map((tab) => (
             <ToolbarButton key={tab} active={workspaceTab === tab} onClick={() => setWorkspaceTab(tab)}>
               {tab}
             </ToolbarButton>
@@ -1248,22 +1233,6 @@ const JSONCompare = () => {
               </div>
             </div>
             <pre className="min-h-[32rem] overflow-auto border border-slate-800 bg-[#0c0f13] p-4 text-sm text-slate-200">{queryResult}</pre>
-          </section>
-        )}
-
-        {workspaceTab === "schema" && (
-          <section className="grid gap-3 lg:grid-cols-2">
-            <div className="border border-slate-800 bg-[#101419] p-4">
-              <h2 className="mb-3 text-sm font-semibold text-white">JSON Schema</h2>
-              <Editor height="32rem" defaultLanguage="json" theme="vs-dark" value={schemaText} onChange={(value) => setSchemaText(value || "")} options={{ minimap: { enabled: false }, fontSize: 13, automaticLayout: true }} />
-              {schemaParsed.error && <div className="mt-3"><ErrorMessage error={schemaParsed.error} /></div>}
-            </div>
-            <div className="border border-slate-800 bg-[#101419] p-4">
-              <h2 className="mb-3 text-sm font-semibold text-white">Validation</h2>
-              {!schemaErrors.length ? <div className="text-sm text-emerald-300">No schema issues found.</div> : schemaErrors.map((error, index) => (
-                <div key={`${error.path}-${index}`} className="mb-2 border border-red-900/70 bg-red-950/20 p-2 text-xs text-red-200"><code>{error.path}</code> {error.message}</div>
-              ))}
-            </div>
           </section>
         )}
 

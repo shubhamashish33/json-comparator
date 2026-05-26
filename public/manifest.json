@@ -1,7 +1,7 @@
 {
   "short_name": "JSONEditor",
   "name": "JSONEditor - JSON Editor and Compare Workbench",
-  "description": "A browser-local JSON editor, formatter, tree viewer, schema validator, query tool, and tree-based compare workbench.",
+  "description": "A browser-local JSON editor, formatter, tree viewer, query tool, and tree-based compare workbench.",
   "icons": [
     {
       "src": "favicon-32.png",
