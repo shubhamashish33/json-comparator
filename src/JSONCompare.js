@@ -733,11 +733,17 @@ const JSONCompare = () => {
     const rightStored = safeSetStorage(STORAGE_KEYS.right, rightText);
     safeSetStorageJSON(STORAGE_KEYS.settings, settings);
     if ((leftText && !leftStored) || (rightText && !rightStored)) {
-      setStorageNotice("Large JSON is kept in memory only and will not be restored after refresh.");
+      setStorageNotice(`Large JSON is kept in memory only and will not be restored after refresh. ${Date.now()}`);
     } else {
       setStorageNotice("");
     }
   }, [leftText, rightText, settings]);
+
+  useEffect(() => {
+    if (!storageNotice) return undefined;
+    const timer = window.setTimeout(() => setStorageNotice(""), 5000);
+    return () => window.clearTimeout(timer);
+  }, [storageNotice]);
 
   useEffect(() => {
     const close = () => setContextMenu(null);
@@ -1077,7 +1083,7 @@ const JSONCompare = () => {
         </div>
         {storageNotice && (
           <div className="mb-3 border border-yellow-900 bg-yellow-950/20 px-3 py-2 text-xs text-yellow-200">
-            {storageNotice}
+            {storageNotice.replace(/\s\d+$/, "")}
           </div>
         )}
 
