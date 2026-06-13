@@ -1,6 +1,6 @@
 import React from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Braces, FileSearch, GitCompare, ListTree, Table2, Wand2 } from "lucide-react";
+import { ArrowLeft, Braces, FileSearch, GitCompare, ListTree, ShieldCheck, Table2, Wand2 } from "lucide-react";
 
 const HelpSection = ({ icon: Icon, title, children }) => (
   <section className="border border-slate-800 bg-[#101419] p-5">
@@ -88,6 +88,18 @@ return value;`}</CodeBlock>
               <li>Use Prev and Next from the sticky compare bar to move through changes.</li>
             </ol>
             <p>Diff paths are highlighted in both trees, and the active diff panel shows the focused left/right value preview.</p>
+          </HelpSection>
+
+          <HelpSection icon={ShieldCheck} title="Secret Redaction">
+            <p>Redact replaces sensitive values in a preview before you apply them to the editor. Detection and replacement happen locally in the browser.</p>
+            <ul className="list-disc space-y-2 pl-5">
+              <li>Common keys such as `password`, `apiKey`, `clientSecret`, and `accessToken` are detected automatically.</li>
+              <li>Key matching ignores case, underscores, and dashes.</li>
+              <li>You can add project-specific key names such as `pin` or `signingKey`.</li>
+              <li>Optional value detection recognizes authorization headers, JWTs, AWS and GitHub tokens, private keys, and credential URLs.</li>
+            </ul>
+            <p>The detection list shows paths and reasons only. It does not repeat the original secret values.</p>
+            <p className="text-slate-500">Applying a preview updates the editor through the normal history flow, so the change can be undone.</p>
           </HelpSection>
 
           <HelpSection icon={ListTree} title="Large JSON Tips">

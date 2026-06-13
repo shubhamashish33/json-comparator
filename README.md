@@ -1,6 +1,6 @@
 # JSONEditor
 
-JSONEditor is a browser-local JSON workbench for editing, inspecting, transforming, and comparing JSON documents. The current design is developer-focused: monospace UI, code-first editing, tree navigation when needed, separate workspaces for editor/compare/query, and guardrails for larger JSON payloads.
+JSONEditor is a browser-local JSON workbench for editing, inspecting, transforming, comparing, and redacting JSON documents. The current design is developer-focused: monospace UI, code-first editing, tree navigation when needed, separate workspaces for editor/compare/query/redact, and guardrails for larger JSON payloads.
 
 <img width="1414" height="755" alt="image" src="https://github.com/user-attachments/assets/e05507c0-30a7-4b92-8192-facb7e29f752" />
 
@@ -11,6 +11,7 @@ JSONEditor is a browser-local JSON workbench for editing, inspecting, transformi
 - Inspect and manipulate nodes from a JSON tree.
 - Compare two JSON documents with tree-based next/previous diff navigation.
 - Query paths and preview JavaScript-style transforms locally.
+- Preview and apply secret redaction without sending JSON to a server.
 - Open a built-in Help page for Table, Query, Compare, and large JSON workflows.
 - Import, export, copy, format, compact, repair, sort keys, and reset the workspace.
 - Keep JSON processing local in the browser.
@@ -154,6 +155,31 @@ return value;
 ```
 
 Transform output can be previewed, then applied back to the editor if it parses as JSON.
+
+### Secret Redaction
+
+The Redact workspace creates a sanitized preview of the current editor JSON.
+
+Default key detection includes common credentials such as:
+
+- `password`, `passwd`, and `pwd`
+- `secret`, `clientSecret`, and `privateKey`
+- `apiKey`, `accessKey`, and `secretKey`
+- `accessToken`, `refreshToken`, `authToken`, and `sessionToken`
+- `authorization`, `cookie`, and related header keys
+
+Key matching is case-insensitive and ignores separators, so `apiKey`, `api_key`, and `API-KEY` are treated as the same key. Additional project-specific keys can be supplied one per line or comma-separated.
+
+Optional value-pattern detection recognizes:
+
+- Bearer and Basic authorization values
+- JWTs
+- AWS access keys
+- GitHub tokens
+- PEM private keys
+- URLs containing embedded credentials
+
+The replacement text is configurable. Preview results list only the detected path and reason, never the original value. A preview must still match the current editor source before it can be applied, which prevents stale output from overwriting newer edits.
 
 ## Large JSON Handling
 

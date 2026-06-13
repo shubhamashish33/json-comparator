@@ -2,6 +2,7 @@ import {
   compareJSONValues,
   getPathParents,
   parseJSONDetailed,
+  redactSecrets,
   repairJSONish,
   toJsonPatch,
   validateAgainstSchema,
@@ -43,6 +44,63 @@ test("returns path parents without ad hoc bracket cleanup", () => {
     "users[1].profile",
     "users[1].profile.email",
   ]);
+});
+
+test("redacts nested secrets by normalized key without mutating the source", () => {
+  const source = {
+    password: "correct horse battery staple",
+    profile: {
+      api_key: "key-value",
+      displayName: "Ada",
+    },
+    sessions: [{ refreshToken: "refresh-value" }],
+  };
+
+  const result = redactSecrets(source);
+
+  expect(result.value).toEqual({
+    password: "[REDACTED]",
+    profile: {
+      api_key: "[REDACTED]",
+      displayName: "Ada",
+    },
+    sessions: [{ refreshToken: "[REDACTED]" }],
+  });
+  expect(result.matches).toEqual([
+    { path: "password", reason: "Sensitive key" },
+    { path: "profile.api_key", reason: "Sensitive key" },
+    { path: "sessions[0].refreshToken", reason: "Sensitive key" },
+  ]);
+  expect(source.profile.api_key).toBe("key-value");
+});
+
+test("redacts recognizable secret values and custom keys", () => {
+  const result = redactSecrets(
+    {
+      headers: { value: "Bearer abc.def.ghi" },
+      deployCode: 123456,
+      publicId: "usr_123",
+    },
+    {
+      customKeys: "deploy_code",
+      replacement: "***",
+    }
+  );
+
+  expect(result.value).toEqual({
+    headers: { value: "***" },
+    deployCode: "***",
+    publicId: "usr_123",
+  });
+  expect(result.matches).toEqual([
+    { path: "headers.value", reason: "Bearer token" },
+    { path: "deployCode", reason: "Sensitive key" },
+  ]);
+});
+
+test("can disable secret value pattern detection", () => {
+  const token = "Bearer abc.def.ghi";
+  expect(redactSecrets({ value: token }, { detectValuePatterns: false }).value).toEqual({ value: token });
 });
 
 test("supports ignored paths and numeric tolerance", () => {

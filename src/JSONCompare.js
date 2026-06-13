@@ -23,6 +23,7 @@ import {
   Redo2,
   RotateCcw,
   Search,
+  ShieldCheck,
   Table2,
   Trash2,
   Undo2,
@@ -34,6 +35,7 @@ import {
   applyDiffToLeft,
   getValueAtPath,
   parseJSONDetailed,
+  redactSecrets,
   repairJSONish,
   toJsonPatch,
 } from "./jsonUtils";
@@ -88,6 +90,21 @@ const sampleRight = {
   metadata: {
     requestId: "abc-2",
     updatedAt: "2026-01-01T10:00:01Z",
+  },
+};
+
+const redactionSample = {
+  user: {
+    email: "john@example.com",
+    password: "correct-horse-battery-staple",
+  },
+  apiKey: "service-key-value",
+  headers: {
+    authorization: "Bearer eyJhbGciOiJIUzI1NiJ9.payload.signature",
+  },
+  databaseUrl: "postgres://app:database-password@db.example.com/app",
+  metadata: {
+    requestId: "req_123",
   },
 };
 
@@ -567,6 +584,12 @@ const JSONCompare = () => {
   const [transformCode, setTransformCode] = useState("return value;");
   const [queryResult, setQueryResult] = useState("");
   const [fetchUrl, setFetchUrl] = useState("");
+  const [redactionOptions, setRedactionOptions] = useState({
+    replacement: "[REDACTED]",
+    customKeys: "",
+    detectValuePatterns: true,
+  });
+  const [redactionPreview, setRedactionPreview] = useState(null);
   const [comparison, setComparison] = useState([]);
   const [filterType, setFilterType] = useState("all");
   const [activeDiffIndex, setActiveDiffIndex] = useState(0);
@@ -965,6 +988,27 @@ const JSONCompare = () => {
     }
   };
 
+  const runRedaction = () => {
+    if (leftParsed.error || leftParsed.value === null) return;
+    const result = redactSecrets(leftParsed.value, redactionOptions);
+    setRedactionPreview({
+      ...result,
+      sourceText: leftText,
+    });
+  };
+
+  const updateRedactionOptions = (nextOptions) => {
+    setRedactionOptions((current) => ({ ...current, ...nextOptions }));
+    setRedactionPreview(null);
+  };
+
+  const applyRedaction = () => {
+    if (!redactionPreview || redactionPreview.sourceText !== leftText) return;
+    commitValue(redactionPreview.value);
+    setRedactionPreview(null);
+    setWorkspaceTab("editor");
+  };
+
   const copyText = (text, type) => {
     navigator.clipboard.writeText(text);
     setCopied(type);
@@ -1001,6 +1045,12 @@ const JSONCompare = () => {
     setTransformCode("return value;");
     setQueryResult("");
     setFetchUrl("");
+    setRedactionOptions({
+      replacement: "[REDACTED]",
+      customKeys: "",
+      detectValuePatterns: true,
+    });
+    setRedactionPreview(null);
     setComparison([]);
     setFilterType("all");
     setActiveDiffIndex(0);
@@ -1046,7 +1096,7 @@ const JSONCompare = () => {
 
       <main className="mx-auto max-w-[120rem] px-4 py-4">
         <div className="mb-3 flex max-w-full flex-nowrap items-center gap-2 overflow-x-auto border-b border-slate-800 pb-3">
-          {["editor", "compare", "query"].map((tab) => (
+          {["editor", "compare", "query", "redact"].map((tab) => (
             <ToolbarButton key={tab} active={workspaceTab === tab} onClick={() => setWorkspaceTab(tab)}>
               {tab}
             </ToolbarButton>
@@ -1239,6 +1289,117 @@ const JSONCompare = () => {
               </div>
             </div>
             <pre className="min-h-[32rem] overflow-auto border border-slate-800 bg-[#0c0f13] p-4 text-sm text-slate-200">{queryResult}</pre>
+          </section>
+        )}
+
+        {workspaceTab === "redact" && (
+          <section className="grid gap-3 lg:grid-cols-[minmax(20rem,26rem)_minmax(0,1fr)]">
+            <div className="space-y-4 border border-slate-800 bg-[#101419] p-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="h-5 w-5 text-cyan-400" />
+                  <h2 className="text-sm font-semibold text-white">Secret redaction</h2>
+                </div>
+                <p className="mt-2 text-xs leading-5 text-slate-500">
+                  Detect sensitive keys and recognizable token formats locally. Preview paths before replacing anything in the editor.
+                </p>
+              </div>
+
+              <label className="block space-y-2 text-xs text-slate-300">
+                <span>Replacement value</span>
+                <input
+                  value={redactionOptions.replacement}
+                  onChange={(event) => updateRedactionOptions({ replacement: event.target.value })}
+                  className="w-full border border-slate-700 bg-[#0b0d10] px-3 py-2 text-sm text-white outline-none focus:border-cyan-500"
+                />
+              </label>
+
+              <label className="block space-y-2 text-xs text-slate-300">
+                <span>Additional sensitive keys</span>
+                <textarea
+                  value={redactionOptions.customKeys}
+                  onChange={(event) => updateRedactionOptions({ customKeys: event.target.value })}
+                  rows={5}
+                  placeholder={"pin\nsigningKey\nconnectionPassword"}
+                  className="w-full border border-slate-700 bg-[#0b0d10] p-3 text-sm text-white outline-none focus:border-cyan-500"
+                />
+                <span className="block leading-5 text-slate-500">One key per line or comma-separated. Matching ignores case, dashes, and underscores.</span>
+              </label>
+
+              <label className="flex items-start gap-3 border border-slate-800 bg-[#0c0f13] p-3 text-xs text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={redactionOptions.detectValuePatterns}
+                  onChange={(event) => updateRedactionOptions({ detectValuePatterns: event.target.checked })}
+                  className="mt-0.5 accent-cyan-500"
+                />
+                <span>
+                  Detect token values
+                  <span className="mt-1 block leading-5 text-slate-500">Bearer/Basic auth, JWTs, AWS and GitHub tokens, private keys, and URLs containing credentials.</span>
+                </span>
+              </label>
+
+              <div className="flex flex-wrap gap-2">
+                <ToolbarButton onClick={runRedaction} active disabled={leftParsed.error || leftParsed.value === null}>
+                  <ShieldCheck className="h-4 w-4" />Preview redaction
+                </ToolbarButton>
+                <ToolbarButton
+                  onClick={applyRedaction}
+                  disabled={!redactionPreview || redactionPreview.sourceText !== leftText}
+                >
+                  Apply to editor
+                </ToolbarButton>
+                <ToolbarButton onClick={() => {
+                  commitValue(redactionSample);
+                  setRedactionPreview(null);
+                }}>
+                  Load example
+                </ToolbarButton>
+              </div>
+
+              <div className="border border-slate-800 bg-[#0c0f13] p-3 text-xs leading-5 text-slate-500">
+                Values under common keys such as <code className="text-slate-300">password</code>, <code className="text-slate-300">apiKey</code>, <code className="text-slate-300">clientSecret</code>, and <code className="text-slate-300">accessToken</code> are replaced regardless of their type.
+              </div>
+            </div>
+
+            <div className="min-w-0 border border-slate-800 bg-[#0c0f13]">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 px-4 py-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-white">Redacted preview</h2>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {redactionPreview ? `${redactionPreview.matches.length} secret${redactionPreview.matches.length === 1 ? "" : "s"} detected` : "Run a preview to inspect the redacted output."}
+                  </p>
+                </div>
+                {redactionPreview?.sourceText !== leftText && redactionPreview && (
+                  <span className="border border-yellow-900 bg-yellow-950/30 px-2 py-1 text-xs text-yellow-200">Source changed; preview again</span>
+                )}
+              </div>
+
+              {redactionPreview ? (
+                <div className="grid min-h-[34rem] xl:grid-cols-[minmax(0,1fr)_18rem]">
+                  <pre className="max-h-[48rem] overflow-auto p-4 text-sm text-slate-200">{stringify(redactionPreview.value, 2)}</pre>
+                  <div className="max-h-[48rem] overflow-auto border-t border-slate-800 p-3 xl:border-l xl:border-t-0">
+                    <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Detected paths</div>
+                    {redactionPreview.matches.length ? (
+                      <div className="space-y-2">
+                        {redactionPreview.matches.map((match, index) => (
+                          <div key={`${match.path}-${index}`} className="border border-slate-800 bg-[#101419] p-2 text-xs">
+                            <code className="break-all text-cyan-300">{match.path}</code>
+                            <div className="mt-1 text-slate-500">{match.reason}</div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-xs leading-5 text-slate-500">No secrets matched the current rules.</div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex min-h-[34rem] items-center justify-center p-8 text-center text-sm text-slate-500">
+                  The original values are never shown in the detection list.
+                </div>
+              )}
+            </div>
           </section>
         )}
 

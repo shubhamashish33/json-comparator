@@ -26,6 +26,88 @@ export const getValueAtPath = (source, path) => {
   }, source);
 };
 
+const DEFAULT_SECRET_KEYS = [
+  "password",
+  "passwd",
+  "pwd",
+  "secret",
+  "clientSecret",
+  "apiKey",
+  "accessKey",
+  "secretKey",
+  "privateKey",
+  "accessToken",
+  "refreshToken",
+  "authToken",
+  "sessionToken",
+  "authorization",
+  "proxyAuthorization",
+  "cookie",
+  "setCookie",
+];
+
+const SECRET_VALUE_PATTERNS = [
+  { reason: "Bearer token", pattern: /^Bearer\s+\S+$/i },
+  { reason: "Basic authorization", pattern: /^Basic\s+[A-Za-z0-9+/]+=*$/i },
+  { reason: "JWT", pattern: /^eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/ },
+  { reason: "AWS access key", pattern: /^(?:AKIA|ASIA)[A-Z0-9]{16}$/ },
+  { reason: "GitHub token", pattern: /^github_pat_[A-Za-z0-9_]{20,}$|^gh[pousr]_[A-Za-z0-9]{20,}$/ },
+  { reason: "Private key", pattern: /^-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/ },
+  { reason: "Credential URL", pattern: /^[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^/\s@]+@/i },
+];
+
+const normalizeSecretKey = (key) => String(key).replace(/[^a-z0-9]/gi, "").toLowerCase();
+
+const parseSecretKeys = (value) =>
+  String(value || "")
+    .split(/\n|,/)
+    .map((key) => normalizeSecretKey(key.trim()))
+    .filter(Boolean);
+
+export const redactSecrets = (source, options = {}) => {
+  const replacement = options.replacement ?? "[REDACTED]";
+  const secretKeys = new Set([
+    ...DEFAULT_SECRET_KEYS.map(normalizeSecretKey),
+    ...parseSecretKeys(options.customKeys),
+  ]);
+  const matches = [];
+
+  const redactValue = (value, path, key) => {
+    if (key !== null && secretKeys.has(normalizeSecretKey(key))) {
+      matches.push({ path: path || "root", reason: "Sensitive key" });
+      return replacement;
+    }
+
+    if (options.detectValuePatterns !== false && typeof value === "string") {
+      const match = SECRET_VALUE_PATTERNS.find(({ pattern }) => pattern.test(value));
+      if (match) {
+        matches.push({ path: path || "root", reason: match.reason });
+        return replacement;
+      }
+    }
+
+    if (Array.isArray(value)) {
+      return value.map((item, index) => redactValue(item, formatPath(path, index), null));
+    }
+
+    if (value && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value).map(([childKey, childValue]) => [
+          childKey,
+          redactValue(childValue, formatPath(path, childKey), childKey),
+        ])
+      );
+    }
+
+    return value;
+  };
+
+  return {
+    value: redactValue(source, "", null),
+    matches,
+  };
+};
+
 export const parseJSONDetailed = (text) => {
   if (!text.trim()) return { value: null, error: null };
   try {
