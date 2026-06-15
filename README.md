@@ -158,7 +158,14 @@ Transform output can be previewed, then applied back to the editor if it parses 
 
 ### Secret Redaction
 
-The Redact workspace creates a sanitized preview of the current editor JSON.
+The Redact workspace provides a direct source-to-output workflow:
+
+1. Paste JSON into the Source JSON editor, import a file, or load the example.
+2. Click `Redact secrets`.
+3. Review the Safe JSON output and detected paths.
+4. Copy or download the result, or replace the source to continue editing sanitized JSON.
+
+Advanced redaction rules are collapsed by default so they do not block the main workflow.
 
 Default key detection includes common credentials such as:
 
@@ -179,7 +186,7 @@ Optional value-pattern detection recognizes:
 - PEM private keys
 - URLs containing embedded credentials
 
-The replacement text is configurable. Preview results list only the detected path and reason, never the original value. A preview must still match the current editor source before it can be applied, which prevents stale output from overwriting newer edits.
+The replacement text is configurable. Preview results list only the detected path and reason, never the original value. Editing or importing new source JSON clears stale output so an older result cannot overwrite newer input.
 
 ## Large JSON Handling
 

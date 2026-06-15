@@ -91,7 +91,13 @@ return value;`}</CodeBlock>
           </HelpSection>
 
           <HelpSection icon={ShieldCheck} title="Secret Redaction">
-            <p>Redact replaces sensitive values in a preview before you apply them to the editor. Detection and replacement happen locally in the browser.</p>
+            <p>Redact is a self-contained workflow for producing JSON that is safe to share. Detection and replacement happen locally in the browser.</p>
+            <ol className="list-decimal space-y-2 pl-5">
+              <li>Paste JSON into the Source JSON editor, import a file, or load the example.</li>
+              <li>Click `Redact secrets`.</li>
+              <li>Review the Safe JSON output and the paths that changed.</li>
+              <li>Copy or download the result. Use `Replace source` only when you want to keep editing the sanitized document.</li>
+            </ol>
             <ul className="list-disc space-y-2 pl-5">
               <li>Common keys such as `password`, `apiKey`, `clientSecret`, and `accessToken` are detected automatically.</li>
               <li>Key matching ignores case, underscores, and dashes.</li>
@@ -99,7 +105,7 @@ return value;`}</CodeBlock>
               <li>Optional value detection recognizes authorization headers, JWTs, AWS and GitHub tokens, private keys, and credential URLs.</li>
             </ul>
             <p>The detection list shows paths and reasons only. It does not repeat the original secret values.</p>
-            <p className="text-slate-500">Applying a preview updates the editor through the normal history flow, so the change can be undone.</p>
+            <p className="text-slate-500">Advanced rules are collapsed by default. Replacing the source uses the normal history flow, so the change can be undone.</p>
           </HelpSection>
 
           <HelpSection icon={ListTree} title="Large JSON Tips">
