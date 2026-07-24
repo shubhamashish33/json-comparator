@@ -309,7 +309,8 @@ npm run build
 - Monaco Editor
 - Web Worker for parse/search/index/compare work
 - Lucide React
-- Tailwind via CDN in `public/index.html`
+- Tailwind CSS compiled as part of the local production build
+- Self-hosted JetBrains Mono variable font
 - Vercel Analytics
 
 ## Current Limitations

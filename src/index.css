@@ -1,15 +1,19 @@
+@import "@fontsource-variable/jetbrains-mono";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 body {
   margin: 0;
-  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Monaco, 'Courier New',
-    monospace;
+  font-family: "JetBrains Mono Variable", monospace;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background: #0b0d10;
 }
 
 code {
-  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Monaco, 'Courier New',
-    monospace;
+  font-family: "JetBrains Mono Variable", monospace;
 }
 
 iframe#webpack-dev-server-client-overlay {

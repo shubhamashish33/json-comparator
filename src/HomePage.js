@@ -1,6 +1,6 @@
 import React from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowRight, Braces, GitCompare, HelpCircle, Lock, TerminalSquare } from "lucide-react";
+import { ArrowRight, Braces, Github, GitCompare, HelpCircle, Lock, TerminalSquare } from "lucide-react";
 
 const HomePage = () => {
   const navigate = useNavigate();
@@ -14,6 +14,16 @@ const HomePage = () => {
             <span className="text-sm font-semibold uppercase text-slate-100">JSONEditor</span>
           </button>
           <div className="flex gap-2">
+            <a
+              href="https://github.com/shubhamashish33/json-comparator"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-2 rounded border border-slate-700 px-3 py-2 text-sm text-slate-200 hover:bg-slate-900"
+              aria-label="View JSONEditor source on GitHub"
+            >
+              <Github className="h-4 w-4" />
+              <span className="hidden sm:inline">GitHub</span>
+            </a>
             <button
               onClick={() => navigate("/help")}
               className="inline-flex items-center gap-2 rounded border border-slate-700 px-3 py-2 text-sm text-slate-200 hover:bg-slate-900"
