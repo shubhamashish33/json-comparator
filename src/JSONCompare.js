@@ -1,5 +1,7 @@
 import { Analytics } from "@vercel/analytics/react";
-import Editor from "@monaco-editor/react";
+import Editor, { DiffEditor } from "@monaco-editor/react";
+import Ajv from "ajv";
+import jmespath from "jmespath";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -7,22 +9,25 @@ import {
   ArrowLeftRight,
   ArrowUp,
   ArrowDown,
+  Braces,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
+  ClipboardPaste,
   Code2,
   Copy,
   Download,
   Eraser,
+  FilePlus2,
   FileJson,
   Github,
   GitCompare,
   HelpCircle,
-  Home,
   Link2,
   ListTree,
+  MoreHorizontal,
   Plus,
   Redo2,
-  RotateCcw,
   Search,
   ShieldCheck,
   Table2,
@@ -40,11 +45,21 @@ import {
   repairJSONish,
   toJsonPatch,
 } from "./jsonUtils";
+import {
+  createDocument,
+  formatBytes,
+  jsonPointerToPath,
+  replaceJsonMatches,
+} from "./workbenchUtils";
 
 const STORAGE_KEYS = {
   left: "json-comparator-json1",
   right: "json-comparator-json2",
   settings: "json-comparator-settings",
+  documents: "json-comparator-documents",
+  activeDocument: "json-comparator-active-document",
+  schema: "json-comparator-schema",
+  schemaEnabled: "json-comparator-schema-enabled",
 };
 
 const defaultSettings = {
@@ -366,13 +381,18 @@ const safeSetStorageJSON = (key, value) => {
   }
 };
 
-const ErrorMessage = ({ error }) => {
+const ErrorMessage = ({ error, onJump }) => {
   if (!error) return null;
   return (
-    <div className="flex items-start gap-2 border border-red-900/70 bg-red-950/30 p-2 text-xs text-red-200">
+    <button
+      type="button"
+      onClick={onJump}
+      className={`flex w-full items-start gap-2 rounded-md border border-red-900/70 bg-red-950/30 p-2 text-left text-xs text-red-200 ${onJump ? "hover:border-red-700 hover:bg-red-950/50" : "cursor-default"}`}
+    >
       <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
-      <span>{error.message}{error.line ? ` at ${error.line}:${error.column}` : ""}</span>
-    </div>
+      <span className="flex-1">{error.message}{error.line ? ` at ${error.line}:${error.column}` : ""}</span>
+      {onJump && <span className="shrink-0 text-red-300">Jump to error</span>}
+    </button>
   );
 };
 
@@ -381,12 +401,38 @@ const ToolbarButton = ({ children, onClick, disabled, active, title }) => (
     title={title}
     disabled={disabled}
     onClick={onClick}
-    className={`inline-flex shrink-0 items-center gap-2 border px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${
-      active ? "border-cyan-500 bg-cyan-500 text-slate-950" : "border-slate-700 bg-[#101419] text-slate-200 hover:bg-slate-900"
+    className={`inline-flex min-h-9 shrink-0 items-center gap-2 rounded-md border px-3 py-2 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-cyan-500/60 disabled:cursor-not-allowed disabled:opacity-40 ${
+      active ? "border-cyan-400 bg-cyan-400 text-slate-950" : "border-slate-700 bg-[#101419] text-slate-200 hover:border-slate-600 hover:bg-slate-900"
     }`}
   >
     {children}
   </button>
+);
+
+const EmptyEditorState = ({ onPaste, onOpen, onSample }) => (
+  <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#0c0f13] p-6">
+    <div className="max-w-lg text-center">
+      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl border border-cyan-500/30 bg-cyan-500/10 text-cyan-300">
+        <Braces className="h-6 w-6" />
+      </div>
+      <h2 className="mt-5 text-xl font-semibold text-white">Paste JSON to begin</h2>
+      <p className="mt-2 text-sm leading-6 text-slate-400">
+        Paste from your clipboard, open a file, or drop a .json or .jsonc file here.
+      </p>
+      <div className="mt-5 flex flex-wrap justify-center gap-2">
+        <ToolbarButton onClick={onPaste} active title="Paste JSON from the clipboard">
+          <ClipboardPaste className="h-4 w-4" />Paste JSON
+        </ToolbarButton>
+        <ToolbarButton onClick={onOpen} title="Open a JSON file">
+          <Upload className="h-4 w-4" />Open file
+        </ToolbarButton>
+        <ToolbarButton onClick={onSample} title="Load example JSON">Load example</ToolbarButton>
+      </div>
+      <div className="mt-5 inline-flex items-center gap-2 rounded-full border border-emerald-900/70 bg-emerald-950/20 px-3 py-1.5 text-xs text-emerald-200">
+        <ShieldCheck className="h-3.5 w-3.5" />Processed locally in this browser
+      </div>
+    </div>
+  </div>
 );
 
 const TreeNode = ({
@@ -484,7 +530,7 @@ const TreeView = ({ value, selectedPath, selectedPaths, matches, onSelect, onCon
 
   if (value === null || value === undefined) return <div className="p-8 text-center text-sm text-slate-500">Paste or load JSON to start.</div>;
   return (
-    <div ref={treeRef} className="h-full overflow-auto bg-[#0c0f13] p-2">
+    <div ref={treeRef} className="h-full overflow-auto bg-[#0c0f13] p-2 font-mono">
       <TreeNode
         nodeKey="root"
         value={value}
@@ -557,6 +603,8 @@ const JSONCompare = () => {
   const navigate = useNavigate();
   const leftFileRef = useRef(null);
   const rightFileRef = useRef(null);
+  const editorRef = useRef(null);
+  const searchInputRef = useRef(null);
   const workerRef = useRef(null);
   const taskIdRef = useRef(0);
   const activeTasksRef = useRef(new Map());
@@ -565,14 +613,21 @@ const JSONCompare = () => {
   const [workspaceTab, setWorkspaceTab] = useState("editor");
   const [editorMode, setEditorMode] = useState("code");
   const [compareMode, setCompareMode] = useState("text");
+  const [documents, setDocuments] = useState([{ id: "document-1", name: "Document 1.json", text: "" }]);
+  const [activeDocumentId, setActiveDocumentId] = useState("document-1");
   const [leftText, setLeftText] = useState("");
   const [rightText, setRightText] = useState("");
+  const [rightDocumentId, setRightDocumentId] = useState("");
   const [leftParsed, setLeftParsed] = useState(EMPTY_WORKER_PARSE);
   const [rightParsed, setRightParsed] = useState(EMPTY_WORKER_PARSE);
   const [settings, setSettings] = useState(defaultSettings);
   const [selectedPath, setSelectedPath] = useState("");
   const [selectedPaths, setSelectedPaths] = useState(new Set());
   const [searchTerm, setSearchTerm] = useState("");
+  const [searchScope, setSearchScope] = useState("all");
+  const [replaceText, setReplaceText] = useState("");
+  const [replaceNotice, setReplaceNotice] = useState("");
+  const [searchExpanded, setSearchExpanded] = useState(false);
   const [activeSearchIndex, setActiveSearchIndex] = useState(0);
   const [searchResult, setSearchResult] = useState({ matches: [], visited: 0, truncated: false, status: "idle" });
   const [workerStatus, setWorkerStatus] = useState({ busy: false, label: "Idle", progress: 0 });
@@ -582,6 +637,7 @@ const JSONCompare = () => {
   const [history, setHistory] = useState([]);
   const [future, setFuture] = useState([]);
   const [query, setQuery] = useState("");
+  const [queryLanguage, setQueryLanguage] = useState("jmespath");
   const [transformCode, setTransformCode] = useState("return value;");
   const [queryResult, setQueryResult] = useState("");
   const [fetchUrl, setFetchUrl] = useState("");
@@ -597,6 +653,16 @@ const JSONCompare = () => {
   const [activeDiffIndex, setActiveDiffIndex] = useState(0);
   const [copied, setCopied] = useState("");
   const [storageNotice, setStorageNotice] = useState("");
+  const [schemaText, setSchemaText] = useState("");
+  const [schemaEnabled, setSchemaEnabled] = useState(false);
+  const [schemaPanelOpen, setSchemaPanelOpen] = useState(false);
+  const [schemaErrors, setSchemaErrors] = useState([]);
+  const [schemaInputError, setSchemaInputError] = useState("");
+  const [cursorPosition, setCursorPosition] = useState({ lineNumber: 1, column: 1 });
+  const [dropActive, setDropActive] = useState(false);
+  const [storageReady, setStorageReady] = useState(false);
+
+  const ajv = useMemo(() => new Ajv({ allErrors: true, strict: false }), []);
 
   const debouncedLeftText = useDebounce(leftText, PARSE_DEBOUNCE_MS);
   const debouncedRightText = useDebounce(rightText, PARSE_DEBOUNCE_MS);
@@ -710,14 +776,38 @@ const JSONCompare = () => {
   const patch = useMemo(() => toJsonPatch(comparison), [comparison]);
   const diffPathSet = useMemo(() => new Set(filteredComparison.map((diff) => diff.path)), [filteredComparison]);
   const activeDiff = filteredComparison[activeDiffIndex] || null;
+  const activeDocument = documents.find((document) => document.id === activeDocumentId) || documents[0];
+  const documentBytes = useMemo(() => new Blob([leftText]).size, [leftText]);
+  const documentType = leftParsed.value === null
+    ? "empty"
+    : Array.isArray(leftParsed.value)
+      ? "array"
+      : typeof leftParsed.value;
 
   useEffect(() => {
     try {
-      setLeftText(localStorage.getItem(STORAGE_KEYS.left) || "");
+      const storedDocuments = JSON.parse(localStorage.getItem(STORAGE_KEYS.documents) || "null");
+      const storedActiveId = localStorage.getItem(STORAGE_KEYS.activeDocument);
+      if (Array.isArray(storedDocuments) && storedDocuments.length) {
+        const restoredActiveId = storedDocuments.some((document) => document.id === storedActiveId)
+          ? storedActiveId
+          : storedDocuments[0].id;
+        setDocuments(storedDocuments);
+        setActiveDocumentId(restoredActiveId);
+        setLeftText(storedDocuments.find((document) => document.id === restoredActiveId)?.text || "");
+      } else {
+        const legacyText = localStorage.getItem(STORAGE_KEYS.left) || "";
+        setLeftText(legacyText);
+        setDocuments([{ id: "document-1", name: "Document 1.json", text: legacyText }]);
+      }
       setRightText(localStorage.getItem(STORAGE_KEYS.right) || "");
       setSettings({ ...defaultSettings, ...JSON.parse(localStorage.getItem(STORAGE_KEYS.settings) || "{}") });
+      setSchemaText(localStorage.getItem(STORAGE_KEYS.schema) || "");
+      setSchemaEnabled(localStorage.getItem(STORAGE_KEYS.schemaEnabled) === "true");
     } catch {
       // Ignore corrupted local storage.
+    } finally {
+      setStorageReady(true);
     }
   }, []);
 
@@ -734,7 +824,7 @@ const JSONCompare = () => {
     }
 
     setSearchResult((current) => ({ ...current, status: "working" }));
-    runWorkerTask("search", { value: leftParsed.value, term: debouncedSearchTerm }, () => {
+    runWorkerTask("search", { value: leftParsed.value, term: debouncedSearchTerm, scope: searchScope }, () => {
       if (!stale) setSearchResult((current) => ({ ...current, status: "working" }));
     })
       .then((result) => {
@@ -747,7 +837,7 @@ const JSONCompare = () => {
     return () => {
       stale = true;
     };
-  }, [debouncedSearchTerm, leftParsed.error, leftParsed.value, runWorkerTask]);
+  }, [debouncedSearchTerm, leftParsed.error, leftParsed.value, runWorkerTask, searchScope]);
 
   useEffect(() => {
     setActiveSearchIndex(0);
@@ -758,15 +848,60 @@ const JSONCompare = () => {
   }, [leftText]);
 
   useEffect(() => {
+    if (!storageReady) return;
+    setDocuments((current) => current.map((document) => (
+      document.id === activeDocumentId ? { ...document, text: leftText } : document
+    )));
+  }, [activeDocumentId, leftText, storageReady]);
+
+  useEffect(() => {
+    if (!rightDocumentId) return;
+    if (rightDocumentId === activeDocumentId) {
+      setRightDocumentId("");
+      return;
+    }
+    const selectedDocument = documents.find((document) => document.id === rightDocumentId);
+    if (!selectedDocument) {
+      setRightDocumentId("");
+      return;
+    }
+    setRightText(selectedDocument.text);
+  }, [activeDocumentId, documents, rightDocumentId]);
+
+  useEffect(() => {
+    if (!storageReady) return;
     const leftStored = safeSetStorage(STORAGE_KEYS.left, leftText);
     const rightStored = safeSetStorage(STORAGE_KEYS.right, rightText);
     safeSetStorageJSON(STORAGE_KEYS.settings, settings);
+    const documentsSize = documents.reduce((total, document) => total + document.text.length, 0);
+    if (documentsSize <= STORAGE_TEXT_LIMIT) safeSetStorageJSON(STORAGE_KEYS.documents, documents);
+    safeSetStorage(STORAGE_KEYS.activeDocument, activeDocumentId);
+    safeSetStorage(STORAGE_KEYS.schema, schemaText);
+    safeSetStorage(STORAGE_KEYS.schemaEnabled, String(schemaEnabled));
     if ((leftText && !leftStored) || (rightText && !rightStored)) {
       setStorageNotice(`Large JSON is kept in memory only and will not be restored after refresh. ${Date.now()}`);
     } else {
       setStorageNotice("");
     }
-  }, [leftText, rightText, settings]);
+  }, [activeDocumentId, documents, leftText, rightText, schemaEnabled, schemaText, settings, storageReady]);
+
+  useEffect(() => {
+    if (!schemaEnabled || !schemaText.trim() || leftParsed.error || leftParsed.value === null) {
+      setSchemaErrors([]);
+      setSchemaInputError("");
+      return;
+    }
+    try {
+      const schema = JSON.parse(schemaText);
+      const validate = ajv.compile(schema);
+      validate(leftParsed.value);
+      setSchemaErrors(validate.errors || []);
+      setSchemaInputError("");
+    } catch (error) {
+      setSchemaErrors([]);
+      setSchemaInputError(error.message || "Invalid JSON Schema");
+    }
+  }, [ajv, leftParsed.error, leftParsed.value, schemaEnabled, schemaText]);
 
   useEffect(() => {
     if (!storageNotice) return undefined;
@@ -817,6 +952,132 @@ const JSONCompare = () => {
     }, 1000);
   }, [leftText]);
 
+  const handleEditorMount = useCallback((editor) => {
+    editorRef.current = editor;
+    setCursorPosition(editor.getPosition() || { lineNumber: 1, column: 1 });
+    editor.onDidChangeCursorPosition((event) => setCursorPosition(event.position));
+  }, []);
+
+  const jumpToParseError = useCallback(() => {
+    if (!leftParsed.error?.line) return;
+    setWorkspaceTab("editor");
+    setEditorMode("code");
+    window.setTimeout(() => {
+      const position = {
+        lineNumber: leftParsed.error.line,
+        column: leftParsed.error.column || 1,
+      };
+      editorRef.current?.setPosition(position);
+      editorRef.current?.revealPositionInCenter(position);
+      editorRef.current?.focus();
+    }, 0);
+  }, [leftParsed.error]);
+
+  const pasteJSON = useCallback(async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text.trim()) commitText(text);
+    } catch {
+      editorRef.current?.focus();
+    }
+  }, [commitText]);
+
+  const handleEditorDrop = useCallback((event) => {
+    event.preventDefault();
+    setDropActive(false);
+    const file = event.dataTransfer.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (readerEvent) => {
+      commitText(String(readerEvent.target.result || ""));
+      setDocuments((current) => current.map((document) => (
+        document.id === activeDocumentId ? { ...document, name: file.name } : document
+      )));
+    };
+    reader.readAsText(file);
+  }, [activeDocumentId, commitText]);
+
+  const switchDocument = useCallback((documentId) => {
+    const nextDocument = documents.find((document) => document.id === documentId);
+    if (!nextDocument || documentId === activeDocumentId) return;
+    setDocuments((current) => current.map((document) => (
+      document.id === activeDocumentId ? { ...document, text: leftText } : document
+    )));
+    setActiveDocumentId(documentId);
+    setLeftText(nextDocument.text);
+    setHistory([]);
+    setFuture([]);
+    setSelectedPath("");
+    setSelectedPaths(new Set());
+  }, [activeDocumentId, documents, leftText]);
+
+  const selectCompareLeftDocument = useCallback((documentId) => {
+    if (documentId === activeDocumentId) return;
+    if (documentId === rightDocumentId) {
+      setRightDocumentId(activeDocumentId);
+      setRightText(leftText);
+    }
+    switchDocument(documentId);
+  }, [activeDocumentId, leftText, rightDocumentId, switchDocument]);
+
+  const selectCompareRightDocument = useCallback((documentId) => {
+    setRightDocumentId(documentId);
+    if (!documentId) return;
+    const selectedDocument = documents.find((document) => document.id === documentId);
+    if (selectedDocument) setRightText(selectedDocument.text);
+  }, [documents]);
+
+  const swapCompareSides = useCallback(() => {
+    const previousLeftId = activeDocumentId;
+    const previousLeftText = leftText;
+    if (rightDocumentId) {
+      switchDocument(rightDocumentId);
+      setRightDocumentId(previousLeftId);
+      setRightText(previousLeftText);
+      return;
+    }
+    commitText(rightText);
+    setRightText(previousLeftText);
+    setRightDocumentId("");
+  }, [activeDocumentId, commitText, leftText, rightDocumentId, rightText, switchDocument]);
+
+  const addDocument = useCallback(() => {
+    const nextDocument = createDocument(documents.length + 1);
+    setDocuments((current) => [
+      ...current.map((document) => (
+        document.id === activeDocumentId ? { ...document, text: leftText } : document
+      )),
+      nextDocument,
+    ]);
+    setActiveDocumentId(nextDocument.id);
+    setLeftText("");
+    setHistory([]);
+    setFuture([]);
+    setWorkspaceTab("editor");
+    setEditorMode("code");
+  }, [activeDocumentId, documents.length, leftText]);
+
+  const closeDocument = useCallback((documentId) => {
+    const index = documents.findIndex((document) => document.id === documentId);
+    if (index < 0) return;
+    if (documents.length === 1) {
+      const freshDocument = createDocument(1);
+      setDocuments([freshDocument]);
+      setActiveDocumentId(freshDocument.id);
+      setLeftText("");
+      return;
+    }
+    const nextDocuments = documents.filter((document) => document.id !== documentId);
+    setDocuments(nextDocuments);
+    if (documentId === activeDocumentId) {
+      const nextDocument = nextDocuments[Math.min(index, nextDocuments.length - 1)];
+      setActiveDocumentId(nextDocument.id);
+      setLeftText(nextDocument.text);
+      setHistory([]);
+      setFuture([]);
+    }
+  }, [activeDocumentId, documents]);
+
   const undo = () => {
     const [previous, ...rest] = history;
     if (previous === undefined) return;
@@ -844,7 +1105,11 @@ const JSONCompare = () => {
     reader.onload = (readerEvent) => {
       if (target === "left") {
         commitText(String(readerEvent.target.result || ""));
+        setDocuments((current) => current.map((document) => (
+          document.id === activeDocumentId ? { ...document, name: file.name } : document
+        )));
       } else {
+        setRightDocumentId("");
         setRightText(String(readerEvent.target.result || ""));
       }
     };
@@ -881,6 +1146,24 @@ const JSONCompare = () => {
     const currentMatch = searchMatches[activeSearchIndex] === "root" ? "" : searchMatches[activeSearchIndex];
     const offset = selectedPath === currentMatch ? 1 : 0;
     jumpToSearchMatch(event.shiftKey ? activeSearchIndex - 1 : activeSearchIndex + offset);
+  };
+
+  const replaceAllMatches = () => {
+    if (leftParsed.error || leftParsed.value === null || !searchTerm.trim()) return;
+    const result = replaceJsonMatches(leftParsed.value, searchTerm, replaceText, searchScope);
+    if (!result.count) {
+      setReplaceNotice("No replaceable string or key matches.");
+      return;
+    }
+    commitValue(result.value);
+    setReplaceNotice(`${result.count} replacement${result.count === 1 ? "" : "s"} applied. Undo is available.`);
+  };
+
+  const jumpToSchemaError = (error) => {
+    const path = jsonPointerToPath(error.instancePath);
+    setWorkspaceTab("editor");
+    setEditorMode("tree");
+    selectPath(path);
   };
 
   const openContext = (path, event) => {
@@ -953,7 +1236,7 @@ const JSONCompare = () => {
       setComparison(diffs);
       setActiveDiffIndex(0);
       if (diffs[0]?.path) setSelectedPath(diffs[0].path);
-      setCompareMode("tree");
+      setCompareMode("diff");
       setCompareStatus({ busy: false, label: "Ready", progress: 100 });
     } catch (error) {
       if (error.message !== "Canceled") setCompareStatus({ busy: false, label: error.message || "Compare failed", progress: 0 });
@@ -975,10 +1258,14 @@ const JSONCompare = () => {
   const runQuery = () => {
     if (leftParsed.error) return;
     try {
-      const value = query.trim() ? getValueAtPath(leftParsed.value, query.trim()) : leftParsed.value;
+      const value = query.trim()
+        ? queryLanguage === "jmespath"
+          ? jmespath.search(leftParsed.value, query.trim())
+          : getValueAtPath(leftParsed.value, query.trim())
+        : leftParsed.value;
       setQueryResult(stringify(value, 2));
     } catch (error) {
-      setQueryResult(error.message);
+      setQueryResult(`Query failed: ${error.message}`);
     }
   };
 
@@ -993,6 +1280,14 @@ const JSONCompare = () => {
       setQueryResult(`Transform failed: ${error.message}`);
     }
   };
+
+  useEffect(() => {
+    if (workspaceTab !== "query" || leftParsed.error || leftParsed.value === null) return;
+    const timer = window.setTimeout(runQuery, 120);
+    return () => window.clearTimeout(timer);
+    // runQuery is intentionally driven by the query inputs and parsed value.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leftParsed.error, leftParsed.value, query, queryLanguage, workspaceTab]);
 
   const runRedaction = () => {
     if (leftParsed.error || leftParsed.value === null) return;
@@ -1049,22 +1344,56 @@ const JSONCompare = () => {
     setActiveDiffIndex(0);
   }, [filterType]);
 
+  useEffect(() => {
+    const handleShortcut = (event) => {
+      if (!(event.ctrlKey || event.metaKey)) return;
+      const key = event.key.toLowerCase();
+      if (key === "n") {
+        event.preventDefault();
+        addDocument();
+      } else if (key === "k") {
+        event.preventDefault();
+        setWorkspaceTab("editor");
+        setEditorMode("tree");
+        setSearchExpanded(true);
+        window.setTimeout(() => searchInputRef.current?.focus(), 0);
+      } else if (event.shiftKey && key === "f" && !leftParsed.error && leftParsed.value !== null) {
+        event.preventDefault();
+        commitText(stringify(leftParsed.value, 2));
+      } else if (event.shiftKey && key === "m" && !leftParsed.error && leftParsed.value !== null) {
+        event.preventDefault();
+        commitText(stringify(leftParsed.value, 0));
+      }
+    };
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, [addDocument, commitText, leftParsed.error, leftParsed.value]);
+
   const resetWorkspace = () => {
     setWorkspaceTab("editor");
     setEditorMode("code");
     setCompareMode("text");
+    const freshDocument = createDocument(1);
+    setDocuments([freshDocument]);
+    setActiveDocumentId(freshDocument.id);
     setLeftText("");
     setRightText("");
+    setRightDocumentId("");
     setSettings(defaultSettings);
     setSelectedPath("");
     setSelectedPaths(new Set());
     setSearchTerm("");
+    setSearchScope("all");
+    setReplaceText("");
+    setReplaceNotice("");
+    setSearchExpanded(false);
     setActiveSearchIndex(0);
     setContextMenu(null);
     setDialog(null);
     setHistory([]);
     setFuture([]);
     setQuery("");
+    setQueryLanguage("jmespath");
     setTransformCode("return value;");
     setQueryResult("");
     setFetchUrl("");
@@ -1080,6 +1409,11 @@ const JSONCompare = () => {
     setActiveDiffIndex(0);
     setCopied("");
     setStorageNotice("");
+    setSchemaText("");
+    setSchemaEnabled(false);
+    setSchemaPanelOpen(false);
+    setSchemaErrors([]);
+    setSchemaInputError("");
     directEditActiveRef.current = false;
     if (directEditTimerRef.current) window.clearTimeout(directEditTimerRef.current);
     Object.values(STORAGE_KEYS).forEach((key) => {
@@ -1092,108 +1426,237 @@ const JSONCompare = () => {
   };
 
   const modeButtons = [
-    ["tree", "Tree", ListTree],
     ["code", "Code", Code2],
-    ["text", "Text", FileJson],
+    ["tree", "Tree", ListTree],
+    ["text", "Paths", FileJson],
     ["table", "Table", Table2],
   ];
 
   return (
-    <div className="min-h-screen bg-[#0b0d10] font-mono text-slate-200 selection:bg-cyan-500/20">
+    <div className="min-h-screen bg-[#0b0d10] font-sans text-slate-200 selection:bg-cyan-500/20">
       <Analytics />
       <nav className="sticky top-0 z-50 border-b border-slate-800 bg-[#0b0d10]/95">
-        <div className="mx-auto flex h-14 max-w-[120rem] items-center justify-between px-4">
+        <div className="mx-auto flex min-h-14 max-w-[120rem] items-center gap-4 px-4">
           <button onClick={() => navigate("/")} className="inline-flex items-center gap-2 text-sm font-semibold uppercase text-white">
             <GitCompare className="h-5 w-5 text-cyan-400" />
             JSONEditor
           </button>
-          <div className="flex gap-2">
+          <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+            {[
+              ["editor", "Edit"],
+              ["compare", "Compare"],
+              ["query", "Query"],
+              ["redact", "Sanitize"],
+            ].map(([tab, label]) => (
+              <button
+                key={tab}
+                onClick={() => setWorkspaceTab(tab)}
+                className={`shrink-0 rounded-md px-3 py-2 text-xs font-medium transition-colors ${
+                  workspaceTab === tab ? "bg-slate-800 text-white" : "text-slate-400 hover:bg-slate-900 hover:text-white"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="flex shrink-0 gap-1">
             <a
               href="https://github.com/shubhamashish33/json-comparator"
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-2 border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-900"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-md text-slate-400 hover:bg-slate-900 hover:text-white"
               aria-label="View JSONEditor source on GitHub"
+              title="GitHub"
             >
               <Github className="h-4 w-4" />
-              <span className="hidden sm:inline">GitHub</span>
             </a>
-            <button onClick={() => navigate("/help")} className="inline-flex items-center gap-2 border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-900">
-              <HelpCircle className="h-4 w-4" /> Help
-            </button>
-            <button onClick={() => navigate("/")} className="inline-flex items-center gap-2 border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-900">
-              <Home className="h-4 w-4" /> Home
+            <button
+              onClick={() => navigate("/help")}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-md text-slate-400 hover:bg-slate-900 hover:text-white"
+              title="Help and keyboard shortcuts"
+              aria-label="Help and keyboard shortcuts"
+            >
+              <HelpCircle className="h-4 w-4" />
             </button>
           </div>
         </div>
       </nav>
 
-      <main className="mx-auto max-w-[120rem] px-4 py-4">
-        <div className="mb-3 flex max-w-full flex-nowrap items-center gap-2 overflow-x-auto border-b border-slate-800 pb-3">
-          {["editor", "compare", "query", "redact"].map((tab) => (
-            <ToolbarButton key={tab} active={workspaceTab === tab} onClick={() => setWorkspaceTab(tab)}>
-              {tab}
-            </ToolbarButton>
+      <main className="mx-auto max-w-[120rem] px-3 py-3 sm:px-4">
+        {workspaceTab !== "compare" && (
+        <div className="mb-2 flex min-w-0 items-center gap-1 overflow-x-auto border-b border-slate-800">
+          {documents.map((document) => (
+            <div
+              key={document.id}
+              className={`group flex max-w-56 shrink-0 items-center border-b-2 ${
+                document.id === activeDocumentId ? "border-cyan-400 bg-slate-900/70 text-white" : "border-transparent text-slate-500 hover:text-slate-300"
+              }`}
+            >
+              <button onClick={() => switchDocument(document.id)} className="min-w-0 truncate px-3 py-2 text-xs">
+                {document.name}
+              </button>
+              <button
+                onClick={() => closeDocument(document.id)}
+                className="mr-1 rounded p-1 opacity-50 hover:bg-slate-800 hover:opacity-100"
+                aria-label={`Close ${document.name}`}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
           ))}
-          <span className="mx-2 h-6 shrink-0 border-l border-slate-800" />
-          <ToolbarButton onClick={() => { commitText(stringify(sampleLeft, 2)); setRightText(stringify(sampleRight, 2)); }}>Sample</ToolbarButton>
-          <ToolbarButton onClick={() => leftFileRef.current?.click()}><Upload className="h-4 w-4" />Import</ToolbarButton>
-          <ToolbarButton onClick={() => downloadText("data.json", leftText || "null")}><Download className="h-4 w-4" />Export</ToolbarButton>
-          <ToolbarButton onClick={() => copyText(leftText, "left")}><Copy className="h-4 w-4" />{copied === "left" ? "Copied" : "Copy"}</ToolbarButton>
-          <ToolbarButton onClick={undo} disabled={!history.length}><Undo2 className="h-4 w-4" /></ToolbarButton>
-          <ToolbarButton onClick={redo} disabled={!future.length}><Redo2 className="h-4 w-4" /></ToolbarButton>
-          <ToolbarButton onClick={() => leftParsed.value !== null && commitValue(sortKeysDeep(leftParsed.value))}>Sort keys</ToolbarButton>
-          <ToolbarButton onClick={() => commitText(repairJSONish(leftText))}><Wand2 className="h-4 w-4" />Repair</ToolbarButton>
-          <ToolbarButton onClick={() => !leftParsed.error && commitText(stringify(leftParsed.value, 0))}>Compact</ToolbarButton>
-          <ToolbarButton onClick={() => !leftParsed.error && commitText(stringify(leftParsed.value, 2))}>Format</ToolbarButton>
-          {workerStatus.busy && <ToolbarButton onClick={cancelWorkerWork}><X className="h-4 w-4" />Cancel work</ToolbarButton>}
-          <ToolbarButton onClick={resetWorkspace}><RotateCcw className="h-4 w-4" />Reset</ToolbarButton>
-          <input ref={leftFileRef} type="file" accept=".json,.jsonc,.txt" className="hidden" onChange={(event) => readFile(event, "left")} />
-          <input ref={rightFileRef} type="file" accept=".json,.jsonc,.txt" className="hidden" onChange={(event) => readFile(event, "right")} />
+          <button onClick={addDocument} className="shrink-0 rounded p-2 text-slate-500 hover:bg-slate-900 hover:text-cyan-300" title="New document (Ctrl/Cmd+N)">
+            <FilePlus2 className="h-4 w-4" />
+          </button>
         </div>
+        )}
 
         {workspaceTab === "editor" && (
-          <div className="mb-3 grid gap-3 lg:grid-cols-[1fr_auto]">
-            <div className="flex min-w-0 items-center border border-slate-800 bg-[#101419] px-3 py-2 text-xs">
-              <span className="text-slate-500">path</span>
-              <code className="ml-3 truncate text-cyan-300">{selectedPath || "root"}</code>
-              <span className="ml-3 text-slate-500">{selectedPaths.size ? `${selectedPaths.size} selected` : ""}</span>
+          <div className="mb-3 flex max-w-full flex-wrap items-center gap-2 rounded-lg border border-slate-800 bg-[#101419] p-2">
+            <div className="flex items-center gap-1 rounded-md bg-[#0b0d10] p-1">
+              {modeButtons.map(([mode, label, Icon]) => (
+                <button
+                  key={mode}
+                  onClick={() => setEditorMode(mode)}
+                  className={`inline-flex min-h-8 items-center gap-2 rounded px-2.5 py-1.5 text-xs font-medium ${
+                    editorMode === mode ? "bg-cyan-400 text-slate-950" : "text-slate-400 hover:bg-slate-900 hover:text-white"
+                  }`}
+                >
+                  <Icon className="h-4 w-4" />{label}
+                </button>
+              ))}
             </div>
-            <div className="flex gap-2">
-              <ToolbarButton onClick={() => addNode(selectedPath)}><Plus className="h-4 w-4" />Add</ToolbarButton>
-              <ToolbarButton onClick={() => editNode(selectedPath)} disabled={leftParsed.error || leftParsed.value === null}>Edit</ToolbarButton>
-              <ToolbarButton onClick={() => clearSelectedValues(selectedPaths.size ? selectedPaths : new Set([selectedPath]))} disabled={!selectedPath && !selectedPaths.size}><Eraser className="h-4 w-4" />Clear values</ToolbarButton>
-              <ToolbarButton onClick={() => removePaths(selectedPaths.size ? selectedPaths : new Set([selectedPath]))} disabled={!selectedPath && !selectedPaths.size}><Trash2 className="h-4 w-4" />Remove</ToolbarButton>
+            <span className="hidden h-6 border-l border-slate-800 sm:block" />
+            <ToolbarButton onClick={() => leftFileRef.current?.click()} title="Open JSON file"><Upload className="h-4 w-4" />Open</ToolbarButton>
+            <ToolbarButton
+              onClick={() => !leftParsed.error && leftParsed.value !== null && commitText(stringify(leftParsed.value, 2))}
+              disabled={leftParsed.error || leftParsed.value === null}
+              active
+              title="Format JSON (Ctrl/Cmd+Shift+F)"
+            >
+              Format
+            </ToolbarButton>
+            <ToolbarButton onClick={() => copyText(leftText, "left")} disabled={!leftText} title="Copy current JSON">
+              <Copy className="h-4 w-4" />{copied === "left" ? "Copied" : "Copy"}
+            </ToolbarButton>
+            <ToolbarButton onClick={undo} disabled={!history.length} title="Undo"><Undo2 className="h-4 w-4" /></ToolbarButton>
+            <ToolbarButton onClick={redo} disabled={!future.length} title="Redo"><Redo2 className="h-4 w-4" /></ToolbarButton>
+            {leftParsed.error && (
+              <ToolbarButton onClick={() => commitText(repairJSONish(leftText))} active title="Attempt to repair common JSON errors">
+                <Wand2 className="h-4 w-4" />Repair
+              </ToolbarButton>
+            )}
+            <div className="relative ml-auto">
+              <details>
+                <summary className="flex min-h-9 cursor-pointer list-none items-center gap-2 rounded-md border border-slate-700 bg-[#101419] px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-900">
+                  <MoreHorizontal className="h-4 w-4" />More
+                </summary>
+                <div className="absolute right-0 top-11 z-50 grid w-52 gap-1 rounded-lg border border-slate-700 bg-[#101419] p-1.5 shadow-2xl shadow-black/50">
+                  <button onClick={() => { commitText(stringify(sampleLeft, 2)); setRightDocumentId(""); setRightText(stringify(sampleRight, 2)); }} className="rounded px-3 py-2 text-left text-xs hover:bg-slate-800">Load sample</button>
+                  <button onClick={() => downloadText(activeDocument?.name || "data.json", leftText || "null")} className="rounded px-3 py-2 text-left text-xs hover:bg-slate-800">Download JSON</button>
+                  <button onClick={() => leftParsed.value !== null && commitValue(sortKeysDeep(leftParsed.value))} disabled={leftParsed.error} className="rounded px-3 py-2 text-left text-xs hover:bg-slate-800 disabled:opacity-40">Sort keys</button>
+                  <button onClick={() => !leftParsed.error && commitText(stringify(leftParsed.value, 0))} disabled={leftParsed.error || leftParsed.value === null} className="rounded px-3 py-2 text-left text-xs hover:bg-slate-800 disabled:opacity-40">Minify</button>
+                  <button onClick={() => setSchemaPanelOpen((current) => !current)} className="rounded px-3 py-2 text-left text-xs hover:bg-slate-800">JSON Schema</button>
+                  <div className="my-1 border-t border-slate-800" />
+                  <button onClick={resetWorkspace} className="rounded px-3 py-2 text-left text-xs text-red-200 hover:bg-red-950/40">Reset workspace</button>
+                </div>
+              </details>
             </div>
+            {workerStatus.busy && <ToolbarButton onClick={cancelWorkerWork}><X className="h-4 w-4" />Cancel work</ToolbarButton>}
+          </div>
+        )}
+        <input ref={leftFileRef} type="file" accept=".json,.jsonc,.txt" className="hidden" onChange={(event) => readFile(event, "left")} />
+        <input ref={rightFileRef} type="file" accept=".json,.jsonc,.txt" className="hidden" onChange={(event) => readFile(event, "right")} />
+
+        {workspaceTab === "editor" && editorMode !== "code" && leftParsed.value !== null && (
+          <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-slate-800 bg-[#101419] px-3 py-2 text-xs">
+            <span className="text-slate-500">Path</span>
+            <code className="mr-auto truncate text-cyan-300">{selectedPath || "root"}</code>
+            <ToolbarButton onClick={() => addNode(selectedPath)}><Plus className="h-4 w-4" />Add</ToolbarButton>
+            {(selectedPath || selectedPaths.size) && (
+              <>
+                <ToolbarButton onClick={() => editNode(selectedPath)}>Edit</ToolbarButton>
+                <ToolbarButton onClick={() => clearSelectedValues(selectedPaths.size ? selectedPaths : new Set([selectedPath]))}><Eraser className="h-4 w-4" />Clear</ToolbarButton>
+                <ToolbarButton onClick={() => removePaths(selectedPaths.size ? selectedPaths : new Set([selectedPath]))}><Trash2 className="h-4 w-4" />Remove</ToolbarButton>
+              </>
+            )}
           </div>
         )}
         {storageNotice && (
-          <div className="mb-3 border border-yellow-900 bg-yellow-950/20 px-3 py-2 text-xs text-yellow-200">
+          <div className="mb-3 rounded-md border border-yellow-900 bg-yellow-950/20 px-3 py-2 text-xs text-yellow-200">
             {storageNotice.replace(/\s\d+$/, "")}
           </div>
         )}
 
-        {workspaceTab === "editor" && (
-          <section className="grid min-h-[calc(100vh-13rem)] gap-3 xl:grid-cols-[260px_minmax(0,1fr)]">
-            <aside className="border border-slate-800 bg-[#101419] p-3">
-              <div className="mb-3 flex border border-slate-800 bg-[#0b0d10] p-1">
-                {modeButtons.map(([mode, label, Icon]) => (
-                  <button key={mode} onClick={() => setEditorMode(mode)} className={`flex-1 px-2 py-1.5 text-xs ${editorMode === mode ? "bg-cyan-500 text-slate-950" : "text-slate-300 hover:bg-slate-900"}`}>
-                    <Icon className="mx-auto h-4 w-4" />
-                    <span className="mt-1 block">{label}</span>
-                  </button>
-                ))}
+        {workspaceTab === "editor" && schemaPanelOpen && (
+          <section className="mb-3 grid gap-3 rounded-lg border border-slate-800 bg-[#101419] p-3 lg:grid-cols-[minmax(0,1fr)_22rem]">
+            <div>
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-white">JSON Schema validation</h2>
+                  <p className="mt-1 text-xs text-slate-500">Paste a JSON Schema to validate the active document locally.</p>
+                </div>
+                <label className="flex items-center gap-2 text-xs text-slate-300">
+                  <input type="checkbox" checked={schemaEnabled} onChange={(event) => setSchemaEnabled(event.target.checked)} className="accent-cyan-400" />
+                  Enabled
+                </label>
               </div>
+              <textarea
+                value={schemaText}
+                onChange={(event) => setSchemaText(event.target.value)}
+                placeholder={'{\n  "type": "object",\n  "required": ["id"]\n}'}
+                rows={8}
+                className="w-full rounded-md border border-slate-700 bg-[#0b0d10] p-3 font-mono text-xs text-slate-200 outline-none focus:border-cyan-500"
+              />
+            </div>
+            <div className="max-h-64 overflow-auto rounded-md border border-slate-800 bg-[#0b0d10] p-3">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Problems</div>
+              {schemaInputError ? (
+                <div className="text-xs leading-5 text-red-300">{schemaInputError}</div>
+              ) : !schemaEnabled ? (
+                <div className="text-xs leading-5 text-slate-500">Enable validation after adding a schema.</div>
+              ) : schemaErrors.length ? schemaErrors.map((error, index) => (
+                <button key={`${error.instancePath}-${index}`} onClick={() => jumpToSchemaError(error)} className="mb-2 block w-full rounded border border-red-900/60 bg-red-950/20 p-2 text-left text-xs hover:border-red-700">
+                  <code className="text-red-200">{jsonPointerToPath(error.instancePath) || "root"}</code>
+                  <span className="mt-1 block text-red-300/80">{error.message}</span>
+                </button>
+              )) : (
+                <div className="flex items-center gap-2 text-xs text-emerald-300"><CheckCircle2 className="h-4 w-4" />Document matches the schema.</div>
+              )}
+            </div>
+          </section>
+        )}
+
+        {workspaceTab === "editor" && (
+          <section className={`grid min-h-[calc(100vh-12rem)] gap-3 ${editorMode === "code" ? "" : "xl:grid-cols-[280px_minmax(0,1fr)]"}`}>
+            {editorMode !== "code" && (
+            <aside className="rounded-lg border border-slate-800 bg-[#101419] p-3">
               <div className="relative mb-3">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
                 <input
+                  ref={searchInputRef}
                   value={searchTerm}
                   onChange={(event) => setSearchTerm(event.target.value)}
                   onKeyDown={handleSearchKeyDown}
-                  placeholder="Search tree"
-                  className="w-full border border-slate-700 bg-[#0b0d10] py-2 pl-9 pr-3 text-xs text-white outline-none focus:border-cyan-500"
+                  onFocus={() => setSearchExpanded(true)}
+                  placeholder="Search JSON"
+                  className="w-full rounded-md border border-slate-700 bg-[#0b0d10] py-2 pl-9 pr-3 text-xs text-white outline-none focus:border-cyan-500"
                 />
               </div>
+              {searchExpanded && (
+                <div className="mb-3 grid gap-2 rounded-md border border-slate-800 bg-[#0b0d10] p-2">
+                  <select value={searchScope} onChange={(event) => setSearchScope(event.target.value)} className="rounded border border-slate-700 bg-[#101419] px-2 py-2 text-xs text-white">
+                    <option value="all">Keys and values</option>
+                    <option value="key">Keys only</option>
+                    <option value="value">Values only</option>
+                    <option value="path">Paths only</option>
+                  </select>
+                  <div className="flex gap-2">
+                    <input value={replaceText} onChange={(event) => setReplaceText(event.target.value)} placeholder="Replace with" className="min-w-0 flex-1 rounded border border-slate-700 bg-[#101419] px-2 py-2 text-xs text-white outline-none focus:border-cyan-500" />
+                    <button onClick={replaceAllMatches} disabled={!searchTerm.trim()} className="rounded border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:bg-slate-800 disabled:opacity-40">Replace all</button>
+                  </div>
+                  {replaceNotice && <div className="text-[11px] leading-4 text-slate-500">{replaceNotice}</div>}
+                </div>
+              )}
               {searchMatches.length > 0 && (
                 <div className="mb-3 max-h-52 overflow-auto border border-slate-800 bg-[#0b0d10] text-xs">
                   <div className="sticky top-0 border-b border-slate-800 bg-[#0b0d10] px-2 py-1.5 text-slate-400">
@@ -1221,24 +1684,35 @@ const JSONCompare = () => {
                 {searchResult.truncated && <div className="border border-yellow-900 p-2 text-yellow-200">Showing first {SEARCH_RESULT_LIMIT} search matches.</div>}
               </div>
             </aside>
+            )}
 
-            <div className="min-w-0 border border-slate-800 bg-[#101419]">
-              {leftParsed.error && <div className="p-3"><ErrorMessage error={leftParsed.error} /></div>}
+            <div className="relative min-w-0 overflow-hidden rounded-lg border border-slate-800 bg-[#101419]">
+              {leftParsed.error && <div className="p-3"><ErrorMessage error={leftParsed.error} onJump={jumpToParseError} /></div>}
               {editorMode === "tree" && !leftParsed.error && (
                 <TreeView value={leftParsed.value} selectedPath={selectedPath} selectedPaths={selectedPaths} matches={matches} onSelect={selectPath} onContextMenu={openContext} />
               )}
               {editorMode === "code" && (
-                <Editor
-                  height="calc(100vh - 14rem)"
-                  defaultLanguage="json"
-                  theme="vs-dark"
-                  value={leftText}
-                  onChange={(value) => updateLeftTextFromEditor(value || "")}
-                  options={{ minimap: { enabled: false }, fontSize: 13, tabSize: 2, wordWrap: "on", automaticLayout: true, scrollBeyondLastLine: false }}
-                />
+                <div
+                  className={`relative ${dropActive ? "ring-2 ring-inset ring-cyan-400" : ""}`}
+                  onDragEnter={(event) => { event.preventDefault(); setDropActive(true); }}
+                  onDragOver={(event) => event.preventDefault()}
+                  onDragLeave={() => setDropActive(false)}
+                  onDrop={handleEditorDrop}
+                >
+                  {!leftText && <EmptyEditorState onPaste={pasteJSON} onOpen={() => leftFileRef.current?.click()} onSample={() => commitText(stringify(sampleLeft, 2))} />}
+                  <Editor
+                    height="calc(100vh - 15rem)"
+                    defaultLanguage="json"
+                    theme="vs-dark"
+                    value={leftText}
+                    onMount={handleEditorMount}
+                    onChange={(value) => updateLeftTextFromEditor(value || "")}
+                    options={{ minimap: { enabled: false }, fontSize: 14, tabSize: 2, wordWrap: "on", automaticLayout: true, scrollBeyondLastLine: false, padding: { top: 12 } }}
+                  />
+                </div>
               )}
               {editorMode === "text" && (
-                <div className="h-[calc(100vh-14rem)] overflow-auto p-3">
+                <div className="h-[calc(100vh-14rem)] overflow-auto p-3 font-mono">
                   <table className="w-full text-left text-xs">
                     <thead className="sticky top-0 bg-[#101419] text-slate-500">
                       <tr><th className="border-b border-slate-800 py-2">Path</th><th className="border-b border-slate-800 py-2">Type</th><th className="border-b border-slate-800 py-2">Value</th></tr>
@@ -1262,7 +1736,7 @@ const JSONCompare = () => {
                 </div>
               )}
               {editorMode === "table" && (
-                <div className="h-[calc(100vh-14rem)] overflow-auto p-3">
+                <div className="h-[calc(100vh-14rem)] overflow-auto p-3 font-mono">
                   {table.rows.length ? (
                     <>
                       <div className="mb-3 border border-slate-800 bg-[#0b0d10] px-3 py-2 text-xs text-slate-400">
@@ -1304,27 +1778,85 @@ const JSONCompare = () => {
                   )}
                 </div>
               )}
+              <div className="flex min-h-8 flex-wrap items-center gap-x-4 gap-y-1 border-t border-slate-800 bg-[#0b0d10] px-3 py-1.5 font-mono text-[11px] text-slate-500">
+                <button onClick={leftParsed.error ? jumpToParseError : undefined} className={leftParsed.error ? "text-red-300 hover:text-red-200" : leftText ? "text-emerald-300" : ""}>
+                  {leftParsed.error ? `Invalid JSON · ${leftParsed.error.line}:${leftParsed.error.column}` : leftText ? "Valid JSON" : "No document content"}
+                </button>
+                <span>{documentType}</span>
+                <span>{leftParsed.index?.visited || 0} nodes</span>
+                <span>{formatBytes(documentBytes)}</span>
+                {schemaEnabled && <button onClick={() => setSchemaPanelOpen(true)} className={schemaErrors.length || schemaInputError ? "text-red-300" : "text-emerald-300"}>{schemaErrors.length || schemaInputError ? `${schemaErrors.length || 1} schema problem${schemaErrors.length === 1 ? "" : "s"}` : "Schema valid"}</button>}
+                {editorMode === "code" && <span className="ml-auto">Ln {cursorPosition.lineNumber}, Col {cursorPosition.column}</span>}
+                <span className={editorMode === "code" ? "" : "ml-auto"}>Local only</span>
+              </div>
             </div>
           </section>
         )}
 
         {workspaceTab === "query" && (
-          <section className="grid gap-3 lg:grid-cols-2">
-            <div className="space-y-3 border border-slate-800 bg-[#101419] p-4">
-              <h2 className="text-sm font-semibold text-white">Query and transform</h2>
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Path query, e.g. profile.email or roles[0]" className="w-full border border-slate-700 bg-[#0b0d10] px-3 py-2 text-sm text-white outline-none focus:border-cyan-500" />
-              <ToolbarButton onClick={runQuery}><Search className="h-4 w-4" />Run query</ToolbarButton>
-              <textarea value={transformCode} onChange={(event) => setTransformCode(event.target.value)} rows={10} className="w-full border border-slate-700 bg-[#0b0d10] p-3 text-sm text-white outline-none focus:border-cyan-500" />
-              <div className="flex gap-2">
-                <ToolbarButton onClick={runTransform}><Wand2 className="h-4 w-4" />Preview transform</ToolbarButton>
-                <ToolbarButton onClick={() => { const parsed = parseJSONDetailed(queryResult); if (!parsed.error) commitValue(parsed.value); }}>Apply result</ToolbarButton>
+          <section className="grid gap-3 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+            <div className="space-y-4 rounded-lg border border-slate-800 bg-[#101419] p-4">
+              <div>
+                <h1 className="text-base font-semibold text-white">Query JSON with live results</h1>
+                <p className="mt-1 text-xs leading-5 text-slate-500">Use JMESPath for filtering and projection, or a simple dot path for quick lookup.</p>
               </div>
-              <div className="grid grid-cols-[1fr_auto] gap-2">
-                <input value={fetchUrl} onChange={(event) => setFetchUrl(event.target.value)} placeholder="https://api.example.com/data" className="border border-slate-700 bg-[#0b0d10] px-3 py-2 text-sm text-white outline-none focus:border-cyan-500" />
-                <ToolbarButton onClick={fetchRemote}><Link2 className="h-4 w-4" />Fetch</ToolbarButton>
+              <label className="grid gap-2 text-xs text-slate-400">
+                Query language
+                <select value={queryLanguage} onChange={(event) => setQueryLanguage(event.target.value)} className="rounded-md border border-slate-700 bg-[#0b0d10] px-3 py-2 text-sm text-white">
+                  <option value="jmespath">JMESPath</option>
+                  <option value="path">Simple path</option>
+                </select>
+              </label>
+              <label className="grid gap-2 text-xs text-slate-400">
+                Expression
+                <textarea
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder={queryLanguage === "jmespath" ? "users[?active].{name: name, email: email}" : "users[0].email"}
+                  rows={4}
+                  className="w-full rounded-md border border-slate-700 bg-[#0b0d10] p-3 font-mono text-sm text-white outline-none focus:border-cyan-500"
+                />
+              </label>
+              <div>
+                <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600">Examples</div>
+                <div className="flex flex-wrap gap-2">
+                  {(queryLanguage === "jmespath"
+                    ? [["First item", "[0]"], ["All IDs", "[*].id"], ["Object keys", "keys(@)"], ["Active items", "[?active]"]]
+                    : [["Profile email", "profile.email"], ["First role", "roles[0]"]]
+                  ).map(([label, expression]) => (
+                    <button key={expression} onClick={() => setQuery(expression)} className="rounded-full border border-slate-700 px-2.5 py-1 text-[11px] text-slate-400 hover:border-cyan-700 hover:text-cyan-200">{label}</button>
+                  ))}
+                </div>
               </div>
+              <details className="rounded-md border border-slate-800 bg-[#0b0d10]">
+                <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-slate-300">Advanced JavaScript transform</summary>
+                <div className="grid gap-2 border-t border-slate-800 p-3">
+                  <p className="text-[11px] leading-4 text-yellow-200/70">Runs user-authored code locally. Use JMESPath for routine queries.</p>
+                  <textarea value={transformCode} onChange={(event) => setTransformCode(event.target.value)} rows={8} className="w-full rounded border border-slate-700 bg-[#080a0d] p-3 font-mono text-xs text-white outline-none focus:border-cyan-500" />
+                  <ToolbarButton onClick={runTransform}><Wand2 className="h-4 w-4" />Preview transform</ToolbarButton>
+                </div>
+              </details>
+              <details className="rounded-md border border-slate-800 bg-[#0b0d10]">
+                <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-slate-300">Load JSON from a URL</summary>
+                <div className="grid grid-cols-[1fr_auto] gap-2 border-t border-slate-800 p-3">
+                  <input value={fetchUrl} onChange={(event) => setFetchUrl(event.target.value)} placeholder="https://api.example.com/data" className="min-w-0 rounded border border-slate-700 bg-[#080a0d] px-3 py-2 text-xs text-white outline-none focus:border-cyan-500" />
+                  <ToolbarButton onClick={fetchRemote}><Link2 className="h-4 w-4" />Fetch</ToolbarButton>
+                </div>
+              </details>
             </div>
-            <pre className="min-h-[32rem] overflow-auto border border-slate-800 bg-[#0c0f13] p-4 text-sm text-slate-200">{queryResult}</pre>
+            <div className="min-w-0 overflow-hidden rounded-lg border border-slate-800 bg-[#0c0f13]">
+              <div className="flex items-center justify-between gap-2 border-b border-slate-800 px-4 py-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-white">Live result</h2>
+                  <p className="mt-1 text-xs text-slate-500">Updates as you type.</p>
+                </div>
+                <div className="flex gap-2">
+                  <ToolbarButton onClick={() => copyText(queryResult, "query")} disabled={!queryResult}><Copy className="h-4 w-4" />{copied === "query" ? "Copied" : "Copy"}</ToolbarButton>
+                  <ToolbarButton onClick={() => { const parsed = parseJSONDetailed(queryResult); if (!parsed.error) commitValue(parsed.value); }} disabled={Boolean(parseJSONDetailed(queryResult).error)}>Apply to document</ToolbarButton>
+                </div>
+              </div>
+              <pre className="h-[38rem] overflow-auto p-4 font-mono text-sm text-slate-200">{queryResult}</pre>
+            </div>
           </section>
         )}
 
@@ -1478,10 +2010,11 @@ const JSONCompare = () => {
 
         {workspaceTab === "compare" && (
           <section className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-            <div className="sticky top-14 z-40 xl:col-span-2 flex flex-wrap items-center gap-2 border border-slate-800 bg-[#101419] p-2 shadow-lg shadow-black/20">
-              <button onClick={() => setCompareMode("text")} className={`inline-flex items-center gap-2 border px-3 py-2 text-xs ${compareMode === "text" ? "border-cyan-500 bg-cyan-500 text-slate-950" : "border-slate-700 text-slate-300 hover:bg-slate-900"}`}><Code2 className="h-4 w-4" />Text</button>
-              <button onClick={() => setCompareMode("tree")} className={`inline-flex items-center gap-2 border px-3 py-2 text-xs ${compareMode === "tree" ? "border-cyan-500 bg-cyan-500 text-slate-950" : "border-slate-700 text-slate-300 hover:bg-slate-900"}`}><ListTree className="h-4 w-4" />Tree</button>
-              <span className="hidden text-xs text-slate-500 md:inline">Use Text to paste/edit both sides. Compare switches to Tree for review.</span>
+            <div className="sticky top-14 z-40 flex flex-wrap items-center gap-2 rounded-lg border border-slate-800 bg-[#101419] p-2 shadow-lg shadow-black/20 xl:col-span-2">
+              <button onClick={() => setCompareMode("text")} className={`inline-flex items-center gap-2 rounded-md border px-3 py-2 text-xs ${compareMode === "text" ? "border-cyan-400 bg-cyan-400 text-slate-950" : "border-slate-700 text-slate-300 hover:bg-slate-900"}`}><Code2 className="h-4 w-4" />Edit inputs</button>
+              <button onClick={() => setCompareMode("diff")} className={`inline-flex items-center gap-2 rounded-md border px-3 py-2 text-xs ${compareMode === "diff" ? "border-cyan-400 bg-cyan-400 text-slate-950" : "border-slate-700 text-slate-300 hover:bg-slate-900"}`}><GitCompare className="h-4 w-4" />Text diff</button>
+              <button onClick={() => setCompareMode("tree")} className={`inline-flex items-center gap-2 rounded-md border px-3 py-2 text-xs ${compareMode === "tree" ? "border-cyan-400 bg-cyan-400 text-slate-950" : "border-slate-700 text-slate-300 hover:bg-slate-900"}`}><ListTree className="h-4 w-4" />Semantic tree</button>
+              <span className="hidden text-xs text-slate-500 lg:inline">Edit both sides, compare, then review as text or by JSON path.</span>
               <span className="mx-1 h-6 border-l border-slate-800" />
               <ToolbarButton onClick={runCompare} active disabled={compareStatus.busy}><GitCompare className="h-4 w-4" />{compareStatus.busy ? "Comparing" : "Compare"}</ToolbarButton>
               {compareStatus.busy && <ToolbarButton onClick={cancelWorkerWork}><X className="h-4 w-4" />Cancel</ToolbarButton>}
@@ -1497,7 +2030,60 @@ const JSONCompare = () => {
               <ToolbarButton onClick={() => leftParsed.value && downloadText("merged-output.json", stringify(applyDiffToLeft(leftParsed.value, comparison), 2))}>Merged</ToolbarButton>
               {compareStatus.busy && <span className="text-xs text-cyan-300">{compareStatus.label} {compareStatus.progress ? `${compareStatus.progress}%` : ""}</span>}
             </div>
-            <div className="border border-slate-800 bg-[#101419]">
+            <div className="grid items-end gap-2 rounded-lg border border-slate-800 bg-[#101419] p-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] xl:col-span-2">
+              <label className="grid min-w-0 gap-1.5 text-xs text-slate-500">
+                Left document
+                <select
+                  value={activeDocumentId}
+                  onChange={(event) => selectCompareLeftDocument(event.target.value)}
+                  className="min-w-0 rounded-md border border-slate-700 bg-[#0b0d10] px-3 py-2 text-sm text-white outline-none focus:border-cyan-500"
+                >
+                  {documents.map((document) => <option key={document.id} value={document.id}>{document.name}</option>)}
+                </select>
+              </label>
+              <button
+                onClick={swapCompareSides}
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-700 px-3 text-xs text-slate-300 hover:border-cyan-700 hover:bg-slate-900 hover:text-cyan-200"
+                title="Swap comparison sides"
+              >
+                <ArrowLeftRight className="h-4 w-4" /><span className="sm:hidden">Swap sides</span>
+              </button>
+              <label className="grid min-w-0 gap-1.5 text-xs text-slate-500">
+                Right document
+                <select
+                  value={rightDocumentId}
+                  onChange={(event) => selectCompareRightDocument(event.target.value)}
+                  className="min-w-0 rounded-md border border-slate-700 bg-[#0b0d10] px-3 py-2 text-sm text-white outline-none focus:border-cyan-500"
+                >
+                  <option value="">Temporary input</option>
+                  {documents.filter((document) => document.id !== activeDocumentId).map((document) => (
+                    <option key={document.id} value={document.id}>{document.name}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            {compareMode === "diff" && (
+              <div className="overflow-hidden rounded-lg border border-slate-800 bg-[#101419] xl:col-span-2">
+                <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+                  <div>
+                    <h2 className="text-sm font-semibold text-white">Side-by-side text diff</h2>
+                    <p className="mt-1 text-xs text-slate-500">Left is the original; right is the modified document.</p>
+                  </div>
+                  <ToolbarButton onClick={() => setCompareMode("text")}>Edit inputs</ToolbarButton>
+                </div>
+                <DiffEditor
+                  height="38rem"
+                  language="json"
+                  theme="vs-dark"
+                  original={leftText}
+                  modified={rightText}
+                  options={{ readOnly: true, renderSideBySide: true, minimap: { enabled: false }, fontSize: 13, automaticLayout: true, scrollBeyondLastLine: false }}
+                />
+              </div>
+            )}
+            {compareMode !== "diff" && (
+            <>
+            <div className="overflow-hidden rounded-lg border border-slate-800 bg-[#101419]">
               <div className="flex items-center justify-between border-b border-slate-800 p-3">
                 <h2 className="text-sm font-semibold text-white">Left JSON</h2>
                 <ToolbarButton onClick={() => leftFileRef.current?.click()}><Upload className="h-4 w-4" /></ToolbarButton>
@@ -1524,13 +2110,10 @@ const JSONCompare = () => {
                 )}
               </div>
             </div>
-            <div className="border border-slate-800 bg-[#101419]">
+            <div className="overflow-hidden rounded-lg border border-slate-800 bg-[#101419]">
               <div className="flex items-center justify-between border-b border-slate-800 p-3">
                 <h2 className="text-sm font-semibold text-white">Right JSON</h2>
-                <div className="flex gap-2">
-                  <ToolbarButton onClick={() => rightFileRef.current?.click()}><Upload className="h-4 w-4" /></ToolbarButton>
-                  <ToolbarButton onClick={() => { commitText(rightText); setRightText(leftText); }}><ArrowLeftRight className="h-4 w-4" /></ToolbarButton>
-                </div>
+                <ToolbarButton onClick={() => rightFileRef.current?.click()} title="Open a temporary right-side file"><Upload className="h-4 w-4" /></ToolbarButton>
               </div>
               <div className="h-[34rem]">
                 {compareMode === "text" ? (
@@ -1539,7 +2122,10 @@ const JSONCompare = () => {
                     defaultLanguage="json"
                     theme="vs-dark"
                     value={rightText}
-                    onChange={(value) => setRightText(value || "")}
+                    onChange={(value) => {
+                      setRightDocumentId("");
+                      setRightText(value || "");
+                    }}
                     options={{ minimap: { enabled: false }, fontSize: 13, tabSize: 2, wordWrap: "on", automaticLayout: true, scrollBeyondLastLine: false }}
                   />
                 ) : rightParsed.error ? <div className="p-3"><ErrorMessage error={rightParsed.error} /></div> : (
@@ -1554,6 +2140,8 @@ const JSONCompare = () => {
                 )}
               </div>
             </div>
+            </>
+            )}
             <div className="xl:col-span-2 border border-slate-800 bg-[#101419] p-3">
               {!comparison.length ? <div className="p-6 text-center text-sm text-slate-500">No differences yet, or the documents match.</div> : (
                 <div className="grid gap-3 xl:grid-cols-[320px_minmax(0,1fr)]">
