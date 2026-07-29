@@ -56,10 +56,11 @@ const buildIndex = (value, limit = TEXT_ROW_LIMIT) => {
   };
 };
 
-const searchIndex = (value, term, limit = SEARCH_RESULT_LIMIT) => {
+const searchIndex = (value, term, scope = "all", limit = SEARCH_RESULT_LIMIT) => {
   if (!term || term.length < 2) return { matches: [], visited: 0, truncated: false };
   const lower = term.toLowerCase();
   const matches = [];
+  const matchedPaths = new Set();
   const stack = [{ node: value, path: "" }];
   let visited = 0;
 
@@ -68,7 +69,12 @@ const searchIndex = (value, term, limit = SEARCH_RESULT_LIMIT) => {
     visited += 1;
     if (node === null || node === undefined) continue;
     if (typeof node !== "object") {
-      if (String(node).toLowerCase().includes(lower)) matches.push(path || "root");
+      const valueMatches = (scope === "all" || scope === "value") && String(node).toLowerCase().includes(lower);
+      const pathMatches = scope === "path" && (path || "root").toLowerCase().includes(lower);
+      if ((valueMatches || pathMatches) && !matchedPaths.has(path || "root")) {
+        matchedPaths.add(path || "root");
+        matches.push(path || "root");
+      }
       continue;
     }
 
@@ -78,7 +84,12 @@ const searchIndex = (value, term, limit = SEARCH_RESULT_LIMIT) => {
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const [key, child] = entries[index];
       const nextPath = formatPath(path, key);
-      if (String(key).toLowerCase().includes(lower)) matches.push(nextPath);
+      const keyMatches = (scope === "all" || scope === "key") && String(key).toLowerCase().includes(lower);
+      const pathMatches = scope === "path" && nextPath.toLowerCase().includes(lower);
+      if ((keyMatches || pathMatches) && !matchedPaths.has(nextPath)) {
+        matchedPaths.add(nextPath);
+        matches.push(nextPath);
+      }
       if (matches.length >= limit) break;
       stack.push({ node: child, path: nextPath });
     }
@@ -111,7 +122,7 @@ globalThis.onmessage = (event) => {
 
     if (task === "search") {
       postProgress(id, "Searching indexed tree", 20);
-      const result = searchIndex(payload.value, payload.term || "");
+      const result = searchIndex(payload.value, payload.term || "", payload.scope || "all");
       globalThis.postMessage({ id, type: "result", task, result });
       return;
     }

@@ -7,7 +7,10 @@ JSONEditor is a browser-local JSON workbench for editing, inspecting, transformi
 
 ## What It Does
 
-- Edit JSON in multiple modes: Tree, Code, Text, and Table.
+- Edit JSON in multiple modes: Code, Tree, Paths, and Table.
+- Keep several browser-local JSON documents open in tabs.
+- Validate documents against a pasted JSON Schema and jump to schema problems by path.
+- Search keys, values, or paths and replace matching strings or keys.
 - Inspect and manipulate nodes from a JSON tree.
 - Compare two JSON documents with tree-based next/previous diff navigation.
 - Query paths and preview JavaScript-style transforms locally.
@@ -26,7 +29,7 @@ Available views:
 
 - `Code`: default Monaco JSON editor for raw editing and paste workflows.
 - `Tree`: expandable JSON tree with path-aware selection.
-- `Text`: flattened path/type/value projection capped for large files.
+- `Paths`: flattened path/type/value projection capped for large files.
 - `Table`: tabular view for arrays of objects.
 
 Tree interactions:
@@ -46,6 +49,8 @@ Node actions:
 - Copy path
 - Copy value
 
+The editor toolbar is contextual: common actions stay visible, while less frequent transforms and workspace controls live under `More`.
+
 Toolbar actions:
 
 - Load sample JSON
@@ -58,6 +63,24 @@ Toolbar actions:
 - Compact JSON
 - Format JSON
 - Reset workspace
+
+Document tabs:
+
+- Create a document with the `+` control or `Ctrl`/`Cmd`+`N`.
+- Switch documents without losing the current tab contents.
+- Small documents are restored in browser storage; large documents remain memory-only.
+
+JSON Schema:
+
+- Open `More` → `JSON Schema`.
+- Paste a schema and enable validation.
+- Click a listed schema problem to jump to its JSON path in Tree mode.
+
+Search and replace:
+
+- Search keys and values together, keys only, values only, or full paths.
+- Use `Replace all` to update matching string values or key names.
+- Replacements participate in the normal editor undo history.
 
 ### Table Mode
 
@@ -89,13 +112,16 @@ For performance, Table mode renders a capped projection:
 
 ### Compare
 
-Comparison uses a paired Text/Tree workflow instead of a separate input area and a separate output area.
+Comparison uses editable inputs, a Monaco side-by-side text diff, and semantic Tree review.
 
 How it works:
 
-- Open Compare and use `Text` mode to paste or edit left and right JSON in Monaco editors.
+- Open Compare and choose an open document for the left and right sides. The right side can also remain a temporary input.
+- Use `Edit inputs` to paste or edit left and right JSON in Monaco editors.
+- Editing a selected right document changes it to a temporary input, preserving the source document tab.
 - Click `Compare`.
-- Compare switches to `Tree` mode automatically.
+- Compare opens the side-by-side text diff automatically.
+- Switch to `Semantic tree` to review differences by JSON path.
 - Both sides render as paged trees.
 - Diff paths are highlighted in the trees.
 - Use the sticky top compare bar for `Prev` / `Next`, filtering, patch export, and merged export.
@@ -132,7 +158,15 @@ The Help page is available from the top navigation. It explains the workflows th
 
 ### Query And Transform
 
-The query workspace supports path lookup and local transform previews.
+The query workspace supports live JMESPath expressions, simple path lookup, and local transform previews.
+
+JMESPath examples:
+
+```text
+users[?active].{name: name, email: email}
+[*].id
+keys(@)
+```
 
 Path examples:
 
@@ -153,6 +187,15 @@ Example:
 value.users = value.users.filter((user) => user.active);
 return value;
 ```
+
+JavaScript transforms are in the collapsed Advanced section. Prefer JMESPath for routine filtering and projection.
+
+## Keyboard Shortcuts
+
+- `Ctrl`/`Cmd` + `N`: create a document.
+- `Ctrl`/`Cmd` + `K`: open JSON search in Tree mode.
+- `Ctrl`/`Cmd` + `Shift` + `F`: format the active document.
+- `Ctrl`/`Cmd` + `Shift` + `M`: minify the active document.
 
 Transform output can be previewed, then applied back to the editor if it parses as JSON.
 
