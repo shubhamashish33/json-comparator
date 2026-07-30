@@ -1244,6 +1244,26 @@ const JSONCompare = () => {
     setDialog(null);
   };
 
+  const clearComparisonResult = () => {
+    setComparison([]);
+    setActiveDiffIndex(0);
+    setSelectedPath("");
+    setCompareStatus({ busy: false, label: "Idle", progress: 0 });
+  };
+
+  const clearLeftComparison = () => {
+    commitText("");
+    clearComparisonResult();
+    setCompareMode("text");
+  };
+
+  const clearRightComparison = () => {
+    setRightDocumentId("");
+    setRightText("");
+    clearComparisonResult();
+    setCompareMode("text");
+  };
+
   const runCompare = async () => {
     if (!isCompareReady) {
       setCompareStatus({
@@ -2130,7 +2150,14 @@ const JSONCompare = () => {
                   <h2 className="text-sm font-semibold text-white">Left JSON</h2>
                   {useLightweightCompareEditor && <span className="truncate text-xs text-amber-300">Large input mode</span>}
                 </div>
-                <ToolbarButton onClick={() => leftFileRef.current?.click()}><Upload className="h-4 w-4" /></ToolbarButton>
+                <div className="flex items-center gap-2">
+                  <ToolbarButton onClick={clearLeftComparison} disabled={!leftText} title="Clear left JSON">
+                    <Eraser className="h-4 w-4" />
+                  </ToolbarButton>
+                  <ToolbarButton onClick={() => leftFileRef.current?.click()} title="Open left JSON">
+                    <Upload className="h-4 w-4" />
+                  </ToolbarButton>
+                </div>
               </div>
               <div className="h-[34rem]">
                 {compareMode === "text" ? (
@@ -2170,7 +2197,14 @@ const JSONCompare = () => {
                   <h2 className="text-sm font-semibold text-white">Right JSON</h2>
                   {useLightweightCompareEditor && <span className="truncate text-xs text-amber-300">Large input mode</span>}
                 </div>
-                <ToolbarButton onClick={() => rightFileRef.current?.click()} title="Open a temporary right-side file"><Upload className="h-4 w-4" /></ToolbarButton>
+                <div className="flex items-center gap-2">
+                  <ToolbarButton onClick={clearRightComparison} disabled={!rightText} title="Clear right JSON">
+                    <Eraser className="h-4 w-4" />
+                  </ToolbarButton>
+                  <ToolbarButton onClick={() => rightFileRef.current?.click()} title="Open a temporary right-side file">
+                    <Upload className="h-4 w-4" />
+                  </ToolbarButton>
+                </div>
               </div>
               <div className="h-[34rem]">
                 {compareMode === "text" ? (
