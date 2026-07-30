@@ -128,6 +128,23 @@ test("compares arrays by object key", () => {
   ]);
 });
 
+test("handles a large nested difference set without spreading worker results", () => {
+  const size = 130000;
+  const left = { items: Array.from({ length: size }, (_, index) => index) };
+  const right = { items: Array.from({ length: size }, (_, index) => index + 1) };
+
+  const diffs = compareJSONValues(left, right);
+
+  expect(diffs).toHaveLength(size);
+  expect(diffs[0]).toMatchObject({ path: "items[0]", type: "modified", oldValue: 0, newValue: 1 });
+  expect(diffs[size - 1]).toMatchObject({
+    path: `items[${size - 1}]`,
+    type: "modified",
+    oldValue: size - 1,
+    newValue: size,
+  });
+});
+
 test("exports JSON Patch operations", () => {
   expect(
     toJsonPatch([

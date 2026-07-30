@@ -199,6 +199,7 @@ const pathMatches = (path, patterns) =>
   });
 
 export const shouldSkipPath = (path, settings) => {
+  if (!settings.ignorePaths && !settings.includePaths) return false;
   const ignorePaths = parsePathList(settings.ignorePaths);
   const includePaths = parsePathList(settings.includePaths);
   if (ignorePaths.length && pathMatches(path, ignorePaths)) return true;
@@ -232,6 +233,10 @@ const objectEntries = (obj, settings) => {
   return Array.from(seen.entries()).map(([normalizedKey, entry]) => [normalizedKey, entry.value, entry.key]);
 };
 
+const appendDifferences = (target, source) => {
+  for (const difference of source) target.push(difference);
+};
+
 const compareArrayByIndex = (left, right, path, settings, compareAny) => {
   const differences = [];
   const maxLength = Math.max(left.length, right.length);
@@ -240,7 +245,7 @@ const compareArrayByIndex = (left, right, path, settings, compareAny) => {
     if (shouldSkipPath(currentPath, settings)) continue;
     if (index >= left.length) differences.push({ path: currentPath, type: "added", value: right[index] });
     else if (index >= right.length) differences.push({ path: currentPath, type: "removed", value: left[index] });
-    else differences.push(...compareAny(left[index], right[index], currentPath));
+    else appendDifferences(differences, compareAny(left[index], right[index], currentPath));
   }
   return differences;
 };
@@ -292,7 +297,7 @@ const compareArrayByKey = (left, right, path, settings, compareAny) => {
     if (shouldSkipPath(currentPath, settings)) return;
     if (!leftEntry) differences.push({ path: currentPath, type: "added", value: rightEntry.item });
     else if (!rightEntry) differences.push({ path: currentPath, type: "removed", value: leftEntry.item });
-    else differences.push(...compareAny(leftEntry.item, rightEntry.item, currentPath));
+    else appendDifferences(differences, compareAny(leftEntry.item, rightEntry.item, currentPath));
   });
   return differences;
 };
@@ -327,7 +332,7 @@ export const compareJSONValues = (left, right, settings = {}, path = "") => {
         if (shouldSkipPath(nextPath, settings)) return;
         if (!leftMap.has(key)) differences.push({ path: nextPath, type: "added", value: rightMap.get(key).value });
         else if (!rightMap.has(key)) differences.push({ path: nextPath, type: "removed", value: leftMap.get(key).value });
-        else differences.push(...compareAny(leftMap.get(key).value, rightMap.get(key).value, nextPath));
+        else appendDifferences(differences, compareAny(leftMap.get(key).value, rightMap.get(key).value, nextPath));
       });
 
       return differences;
