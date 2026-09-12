@@ -128,6 +128,178 @@ test("compares arrays by object key", () => {
   ]);
 });
 
+test("compares every entry when match keys repeat using stable occurrence index", () => {
+  const diffs = compareJSONValues(
+    { users: [{ id: 1, name: "before" }, { id: 1, name: "same" }] },
+    { users: [{ id: 1, name: "after" }, { id: 1, name: "same" }] },
+    { arrayMode: "match-key", arrayMatchKey: "id" }
+  );
+
+  expect(diffs).toEqual([
+    {
+      path: 'users[id="1"][0].name',
+      type: "modified",
+      oldValue: "before",
+      newValue: "after",
+    },
+  ]);
+});
+
+test("reports extra repeated match-key entries with stable occurrence index", () => {
+  const diffs = compareJSONValues(
+    { users: [{ id: 1, name: "first" }, { id: 1, name: "second" }] },
+    { users: [{ id: 1, name: "first" }] },
+    { arrayMode: "match-key", arrayMatchKey: "id" }
+  );
+
+  expect(diffs).toEqual([
+    {
+      path: 'users[id="1"][1]',
+      type: "removed",
+      value: { id: 1, name: "second" },
+    },
+  ]);
+});
+
+test("handles duplicate entries occurring at different indices on each side unambiguously", () => {
+  const diffs = compareJSONValues(
+    {
+      users: [
+        { id: 99, name: "other" },
+        { id: 1, name: "first-left" },
+        { id: 1, name: "second-left" },
+      ],
+    },
+    {
+      users: [
+        { id: 1, name: "first-right" },
+        { id: 88, name: "other2" },
+        { id: 1, name: "second-right" },
+        { id: 1, name: "third-right" },
+      ],
+    },
+    { arrayMode: "match-key", arrayMatchKey: "id" }
+  );
+
+  expect(diffs).toEqual([
+    {
+      path: 'users[id="99"]',
+      type: "removed",
+      value: { id: 99, name: "other" },
+    },
+    {
+      path: 'users[id="1"][0].name',
+      type: "modified",
+      oldValue: "first-left",
+      newValue: "first-right",
+    },
+    {
+      path: 'users[id="1"][1].name',
+      type: "modified",
+      oldValue: "second-left",
+      newValue: "second-right",
+    },
+    {
+      path: 'users[id="1"][2]',
+      type: "added",
+      value: { id: 1, name: "third-right" },
+    },
+    {
+      path: 'users[id="88"]',
+      type: "added",
+      value: { id: 88, name: "other2" },
+    },
+  ]);
+});
+
+test("uses positional fallback for entries missing the match key", () => {
+  const diffs = compareJSONValues(
+    { users: [{ name: "before" }] },
+    { users: [{ name: "after" }] },
+    { arrayMode: "match-key", arrayMatchKey: "id" }
+  );
+
+  expect(diffs).toEqual([
+    {
+      path: "users[0].name",
+      type: "modified",
+      oldValue: "before",
+      newValue: "after",
+    },
+  ]);
+});
+
+test("preserves true positional fallback semantics when unkeyed item moves around keyed items", () => {
+  const diffs = compareJSONValues(
+    { users: [{ name: "unkeyed" }, { id: 1, name: "keyed" }] },
+    { users: [{ id: 1, name: "keyed" }, { name: "unkeyed" }] },
+    { arrayMode: "match-key", arrayMatchKey: "id" }
+  );
+
+  expect(diffs).toEqual([
+    {
+      path: "users[0]",
+      type: "removed",
+      value: { name: "unkeyed" },
+    },
+    {
+      path: "users[1]",
+      type: "added",
+      value: { name: "unkeyed" },
+    },
+  ]);
+});
+
+test("keeps missing-key fallback separate from actual IDs to avoid collisions", () => {
+  const diffs = compareJSONValues(
+    { users: [{ id: "0", name: "has ID" }, { name: "no ID before" }] },
+    { users: [{ id: "0", name: "has ID" }, { name: "no ID after" }] },
+    { arrayMode: "match-key", arrayMatchKey: "id" }
+  );
+
+  expect(diffs).toEqual([
+    {
+      path: "users[1].name",
+      type: "modified",
+      oldValue: "no ID before",
+      newValue: "no ID after",
+    },
+  ]);
+});
+
+test("matches numeric and string match-key values after normalization", () => {
+  const diffs = compareJSONValues(
+    { users: [{ id: 1, name: "before" }] },
+    { users: [{ id: "1", name: "after" }] },
+    { arrayMode: "match-key", arrayMatchKey: "id" }
+  );
+
+  expect(diffs).toEqual([
+    {
+      path: 'users[id="1"].id',
+      type: "modified",
+      oldValue: 1,
+      newValue: "1",
+    },
+    {
+      path: 'users[id="1"].name',
+      type: "modified",
+      oldValue: "before",
+      newValue: "after",
+    },
+  ]);
+});
+
+test("respects stringNumberEquivalence for match-key property comparison", () => {
+  const diffs = compareJSONValues(
+    { users: [{ id: 1, name: "Ada" }] },
+    { users: [{ id: "1", name: "Ada" }] },
+    { arrayMode: "match-key", arrayMatchKey: "id", stringNumberEquivalence: true }
+  );
+
+  expect(diffs).toEqual([]);
+});
+
 test("handles a large nested difference set without spreading worker results", () => {
   const size = 130000;
   const left = { items: Array.from({ length: size }, (_, index) => index) };

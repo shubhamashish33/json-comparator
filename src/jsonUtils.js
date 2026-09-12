@@ -283,22 +283,100 @@ const compareArrayByKey = (left, right, path, settings, compareAny) => {
   const keyName = settings.arrayMatchKey?.trim();
   if (!keyName) return compareArrayByIndex(left, right, path, settings, compareAny);
 
-  const leftMap = new Map();
-  const rightMap = new Map();
-  left.forEach((item, index) => leftMap.set(String(item?.[keyName] ?? `__index_${index}`), { item, index }));
-  right.forEach((item, index) => rightMap.set(String(item?.[keyName] ?? `__index_${index}`), { item, index }));
+  const isObject = (val) => val !== null && typeof val === "object" && !Array.isArray(val);
+  const hasKey = (item) => isObject(item) && keyName in item && item[keyName] !== undefined && item[keyName] !== null;
+
+  const idBuckets = new Map();
+  const leftUnkeyedByIndex = new Map();
+  const rightUnkeyedByIndex = new Map();
+
+  left.forEach((item, index) => {
+    if (hasKey(item)) {
+      const key = String(item[keyName]);
+      const bucket = idBuckets.get(key) || { left: [], right: [] };
+      bucket.left.push({ item, index });
+      idBuckets.set(key, bucket);
+    } else {
+      leftUnkeyedByIndex.set(index, item);
+    }
+  });
+
+  right.forEach((item, index) => {
+    if (hasKey(item)) {
+      const key = String(item[keyName]);
+      const bucket = idBuckets.get(key) || { left: [], right: [] };
+      bucket.right.push({ item, index });
+      idBuckets.set(key, bucket);
+    } else {
+      rightUnkeyedByIndex.set(index, item);
+    }
+  });
 
   const differences = [];
-  const allKeys = new Set([...leftMap.keys(), ...rightMap.keys()]);
+
+  // 1. Compare entries with match keys using stable occurrence identifiers for duplicates
+  const allKeys = Array.from(idBuckets.keys());
   allKeys.forEach((key) => {
-    const leftEntry = leftMap.get(key);
-    const rightEntry = rightMap.get(key);
-    const currentPath = `${path || "root"}[${keyName}=${JSON.stringify(key)}]`;
-    if (shouldSkipPath(currentPath, settings)) return;
-    if (!leftEntry) differences.push({ path: currentPath, type: "added", value: rightEntry.item });
-    else if (!rightEntry) differences.push({ path: currentPath, type: "removed", value: leftEntry.item });
-    else appendDifferences(differences, compareAny(leftEntry.item, rightEntry.item, currentPath));
+    const { left: leftEntries, right: rightEntries } = idBuckets.get(key);
+    const isDuplicateKey = leftEntries.length > 1 || rightEntries.length > 1;
+    const sharedCount = Math.min(leftEntries.length, rightEntries.length);
+
+    for (let occurrence = 0; occurrence < sharedCount; occurrence += 1) {
+      const leftEntry = leftEntries[occurrence];
+      const rightEntry = rightEntries[occurrence];
+      const currentPath = isDuplicateKey
+        ? `${path || "root"}[${keyName}=${JSON.stringify(key)}][${occurrence}]`
+        : `${path || "root"}[${keyName}=${JSON.stringify(key)}]`;
+      if (!shouldSkipPath(currentPath, settings)) {
+        appendDifferences(differences, compareAny(leftEntry.item, rightEntry.item, currentPath));
+      }
+    }
+
+    leftEntries.slice(sharedCount).forEach(({ item }, i) => {
+      const occurrence = sharedCount + i;
+      const currentPath = isDuplicateKey
+        ? `${path || "root"}[${keyName}=${JSON.stringify(key)}][${occurrence}]`
+        : `${path || "root"}[${keyName}=${JSON.stringify(key)}]`;
+      if (!shouldSkipPath(currentPath, settings)) {
+        differences.push({ path: currentPath, type: "removed", value: item });
+      }
+    });
+
+    rightEntries.slice(sharedCount).forEach(({ item }, i) => {
+      const occurrence = sharedCount + i;
+      const currentPath = isDuplicateKey
+        ? `${path || "root"}[${keyName}=${JSON.stringify(key)}][${occurrence}]`
+        : `${path || "root"}[${keyName}=${JSON.stringify(key)}]`;
+      if (!shouldSkipPath(currentPath, settings)) {
+        differences.push({ path: currentPath, type: "added", value: item });
+      }
+    });
   });
+
+  // 2. Compare unkeyed entries by true positional array index
+  const maxLength = Math.max(left.length, right.length);
+  for (let index = 0; index < maxLength; index += 1) {
+    const hasLeftUnkeyed = leftUnkeyedByIndex.has(index);
+    const hasRightUnkeyed = rightUnkeyedByIndex.has(index);
+
+    if (hasLeftUnkeyed && hasRightUnkeyed) {
+      const currentPath = formatPath(path, index);
+      if (!shouldSkipPath(currentPath, settings)) {
+        appendDifferences(differences, compareAny(leftUnkeyedByIndex.get(index), rightUnkeyedByIndex.get(index), currentPath));
+      }
+    } else if (hasLeftUnkeyed && !hasRightUnkeyed) {
+      const currentPath = formatPath(path, index);
+      if (!shouldSkipPath(currentPath, settings)) {
+        differences.push({ path: currentPath, type: "removed", value: leftUnkeyedByIndex.get(index) });
+      }
+    } else if (!hasLeftUnkeyed && hasRightUnkeyed) {
+      const currentPath = formatPath(path, index);
+      if (!shouldSkipPath(currentPath, settings)) {
+        differences.push({ path: currentPath, type: "added", value: rightUnkeyedByIndex.get(index) });
+      }
+    }
+  }
+
   return differences;
 };
 

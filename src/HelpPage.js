@@ -99,6 +99,7 @@ return value;`}</CodeBlock>
               <li>Switch to Semantic tree and use Prev or Next to review changes by JSON path.</li>
             </ol>
             <p>Diff paths are highlighted in both trees, and the active diff panel shows the focused left/right value preview.</p>
+            <p>When using an object match key, duplicate keys are retained and compared in appearance order with stable occurrence identifiers so duplicate differences remain individually identifiable without index overlap. Extra duplicates are reported as added or removed. Items missing the key preserve true positional fallback semantics by comparing at their array index, and numeric and string key values are normalized while respecting comparison settings.</p>
           </HelpSection>
 
           <HelpSection icon={ShieldCheck} title="Sanitize Secrets">
