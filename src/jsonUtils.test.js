@@ -388,6 +388,22 @@ test("preserves additions and modifications while applying sibling array differe
   expect(applyDiffToLeft(left, differences)).toEqual(right);
 });
 
+test("keeps array-removal grouping structural when property names contain brackets", () => {
+  const differences = compareJSONValues(
+    { foo: { items: [1, 2], "items[1]": "property value" } },
+    { foo: { items: [1] } }
+  );
+
+  expect(differences[0].arrayRemoval).toEqual({
+    parentTokens: [
+      { type: "property", value: "foo" },
+      { type: "property", value: "items" },
+    ],
+    index: 1,
+  });
+  expect(differences[1]).not.toHaveProperty("arrayRemoval");
+});
+
 test("validates a useful subset of JSON Schema", () => {
   const errors = validateAgainstSchema(
     { id: 123, tags: ["ok", 12] },

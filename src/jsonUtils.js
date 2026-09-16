@@ -237,15 +237,38 @@ const appendDifferences = (target, source) => {
   for (const difference of source) target.push(difference);
 };
 
-const compareArrayByIndex = (left, right, path, settings, compareAny) => {
+const createPathToken = (type, value) => ({ type, value });
+const isCompositeValue = (value) => value !== null && typeof value === "object";
+const extendPathTokens = (pathTokens, leftValue, rightValue, ...tokens) =>
+  isCompositeValue(leftValue) || isCompositeValue(rightValue)
+    ? [...pathTokens, ...tokens]
+    : pathTokens;
+
+const compareArrayByIndex = (left, right, path, settings, compareAny, pathTokens) => {
   const differences = [];
   const maxLength = Math.max(left.length, right.length);
   for (let index = 0; index < maxLength; index += 1) {
     const currentPath = formatPath(path, index);
     if (shouldSkipPath(currentPath, settings)) continue;
     if (index >= left.length) differences.push({ path: currentPath, type: "added", value: right[index] });
-    else if (index >= right.length) differences.push({ path: currentPath, type: "removed", value: left[index] });
-    else appendDifferences(differences, compareAny(left[index], right[index], currentPath));
+    else if (index >= right.length) {
+      differences.push({
+        path: currentPath,
+        type: "removed",
+        value: left[index],
+        arrayRemoval: { parentTokens: pathTokens, index },
+      });
+    } else {
+      appendDifferences(
+        differences,
+        compareAny(
+          left[index],
+          right[index],
+          currentPath,
+          extendPathTokens(pathTokens, left[index], right[index], createPathToken("index", index))
+        )
+      );
+    }
   }
   return differences;
 };
@@ -279,9 +302,9 @@ const compareArrayIgnoringOrder = (left, right, path, settings) => {
   return differences;
 };
 
-const compareArrayByKey = (left, right, path, settings, compareAny) => {
+const compareArrayByKey = (left, right, path, settings, compareAny, pathTokens) => {
   const keyName = settings.arrayMatchKey?.trim();
-  if (!keyName) return compareArrayByIndex(left, right, path, settings, compareAny);
+  if (!keyName) return compareArrayByIndex(left, right, path, settings, compareAny, pathTokens);
 
   const isObject = (val) => val !== null && typeof val === "object" && !Array.isArray(val);
   const hasKey = (item) => isObject(item) && keyName in item && item[keyName] !== undefined && item[keyName] !== null;
@@ -328,7 +351,22 @@ const compareArrayByKey = (left, right, path, settings, compareAny) => {
         ? `${path || "root"}[${keyName}=${JSON.stringify(key)}][${occurrence}]`
         : `${path || "root"}[${keyName}=${JSON.stringify(key)}]`;
       if (!shouldSkipPath(currentPath, settings)) {
-        appendDifferences(differences, compareAny(leftEntry.item, rightEntry.item, currentPath));
+        appendDifferences(
+          differences,
+          compareAny(
+            leftEntry.item,
+            rightEntry.item,
+            currentPath,
+            extendPathTokens(
+              pathTokens,
+              leftEntry.item,
+              rightEntry.item,
+              createPathToken("match-key", keyName),
+              createPathToken("key", key),
+              ...(isDuplicateKey ? [createPathToken("occurrence", occurrence)] : [])
+            )
+          )
+        );
       }
     }
 
@@ -362,7 +400,20 @@ const compareArrayByKey = (left, right, path, settings, compareAny) => {
     if (hasLeftUnkeyed && hasRightUnkeyed) {
       const currentPath = formatPath(path, index);
       if (!shouldSkipPath(currentPath, settings)) {
-        appendDifferences(differences, compareAny(leftUnkeyedByIndex.get(index), rightUnkeyedByIndex.get(index), currentPath));
+        appendDifferences(
+          differences,
+          compareAny(
+            leftUnkeyedByIndex.get(index),
+            rightUnkeyedByIndex.get(index),
+            currentPath,
+            extendPathTokens(
+              pathTokens,
+              leftUnkeyedByIndex.get(index),
+              rightUnkeyedByIndex.get(index),
+              createPathToken("index", index)
+            )
+          )
+        );
       }
     } else if (hasLeftUnkeyed && !hasRightUnkeyed) {
       const currentPath = formatPath(path, index);
@@ -381,7 +432,7 @@ const compareArrayByKey = (left, right, path, settings, compareAny) => {
 };
 
 export const compareJSONValues = (left, right, settings = {}, path = "") => {
-  const compareAny = (leftValue, rightValue, currentPath) => {
+  const compareAny = (leftValue, rightValue, currentPath, pathTokens) => {
     if (shouldSkipPath(currentPath, settings)) return [];
     const leftIsObject = leftValue && typeof leftValue === "object";
     const rightIsObject = rightValue && typeof rightValue === "object";
@@ -391,9 +442,9 @@ export const compareJSONValues = (left, right, settings = {}, path = "") => {
         return compareArrayIgnoringOrder(leftValue, rightValue, currentPath, settings);
       }
       if (settings.arrayMode === "match-key") {
-        return compareArrayByKey(leftValue, rightValue, currentPath, settings, compareAny);
+        return compareArrayByKey(leftValue, rightValue, currentPath, settings, compareAny, pathTokens);
       }
-      return compareArrayByIndex(leftValue, rightValue, currentPath, settings, compareAny);
+      return compareArrayByIndex(leftValue, rightValue, currentPath, settings, compareAny, pathTokens);
     }
 
     if (leftIsObject && rightIsObject && !Array.isArray(leftValue) && !Array.isArray(rightValue)) {
@@ -410,7 +461,22 @@ export const compareJSONValues = (left, right, settings = {}, path = "") => {
         if (shouldSkipPath(nextPath, settings)) return;
         if (!leftMap.has(key)) differences.push({ path: nextPath, type: "added", value: rightMap.get(key).value });
         else if (!rightMap.has(key)) differences.push({ path: nextPath, type: "removed", value: leftMap.get(key).value });
-        else appendDifferences(differences, compareAny(leftMap.get(key).value, rightMap.get(key).value, nextPath));
+        else {
+          appendDifferences(
+            differences,
+            compareAny(
+              leftMap.get(key).value,
+              rightMap.get(key).value,
+              nextPath,
+              extendPathTokens(
+                pathTokens,
+                leftMap.get(key).value,
+                rightMap.get(key).value,
+                createPathToken("property", displayKey)
+              )
+            )
+          );
+        }
       });
 
       return differences;
@@ -423,7 +489,7 @@ export const compareJSONValues = (left, right, settings = {}, path = "") => {
     return [];
   };
 
-  return compareAny(left, right, path);
+  return compareAny(left, right, path, []);
 };
 
 export const searchInObject = (obj, searchTerm, currentPath = "", parentPaths = []) => {
@@ -502,20 +568,17 @@ const toPointer = (path) => {
     .join("/")}`;
 };
 
-const getArrayRemoval = (difference) => {
-  if (difference.type !== "removed") return null;
-  const match = /^(.*)\[(\d+)\]$/.exec(difference.path || "");
-  return match ? { parentPath: match[1], index: Number(match[2]) } : null;
-};
+const getArrayRemoval = (difference) => difference.type === "removed" ? difference.arrayRemoval : null;
 
 const orderDifferencesForApplication = (differences) => {
   const removalGroups = new Map();
   differences.forEach((difference) => {
     const removal = getArrayRemoval(difference);
     if (!removal) return;
-    const group = removalGroups.get(removal.parentPath) || [];
+    const parentKey = JSON.stringify(removal.parentTokens);
+    const group = removalGroups.get(parentKey) || [];
     group.push({ difference, index: removal.index });
-    removalGroups.set(removal.parentPath, group);
+    removalGroups.set(parentKey, group);
   });
 
   removalGroups.forEach((group) => group.sort((left, right) => right.index - left.index));
@@ -524,9 +587,10 @@ const orderDifferencesForApplication = (differences) => {
   return differences.map((difference) => {
     const removal = getArrayRemoval(difference);
     if (!removal) return difference;
-    const group = removalGroups.get(removal.parentPath);
-    const offset = groupOffsets.get(removal.parentPath) || 0;
-    groupOffsets.set(removal.parentPath, offset + 1);
+    const parentKey = JSON.stringify(removal.parentTokens);
+    const group = removalGroups.get(parentKey);
+    const offset = groupOffsets.get(parentKey) || 0;
+    groupOffsets.set(parentKey, offset + 1);
     return group[offset].difference;
   });
 };
