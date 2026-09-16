@@ -1,4 +1,5 @@
 import {
+  applyDiffToLeft,
   compareJSONValues,
   getPathParents,
   parseJSONDetailed,
@@ -329,6 +330,62 @@ test("exports JSON Patch operations", () => {
     { op: "add", path: "/user/age", value: 37 },
     { op: "remove", path: "/debug" },
   ]);
+});
+
+test("applies index-based array removals from highest index first", () => {
+  const left = {
+    items: [1, 2, 3],
+    nested: [[1, 2, 3], [4, 5, 6]],
+  };
+  const right = {
+    items: [1],
+    nested: [[1], [4]],
+  };
+  const differences = compareJSONValues(left, right);
+  const patch = toJsonPatch(differences);
+  const applyPatchSequentially = (source, operations) => {
+    const clone = JSON.parse(JSON.stringify(source));
+    operations.forEach(({ op, path, value }) => {
+      const tokens = path
+        .split("/")
+        .slice(1)
+        .map((token) => token.replace(/~1/g, "/").replace(/~0/g, "~"));
+      const last = tokens.pop();
+      const parent = tokens.reduce((current, token) => current[token], clone);
+      if (op === "remove") {
+        if (Array.isArray(parent)) parent.splice(Number(last), 1);
+        else delete parent[last];
+      } else {
+        parent[last] = value;
+      }
+    });
+    return clone;
+  };
+
+  expect(applyDiffToLeft(left, differences)).toEqual(right);
+  expect(patch).toEqual([
+    { op: "remove", path: "/items/2" },
+    { op: "remove", path: "/items/1" },
+    { op: "remove", path: "/nested/0/2" },
+    { op: "remove", path: "/nested/0/1" },
+    { op: "remove", path: "/nested/1/2" },
+    { op: "remove", path: "/nested/1/1" },
+  ]);
+  expect(applyPatchSequentially(left, patch)).toEqual(right);
+});
+
+test("preserves additions and modifications while applying sibling array differences", () => {
+  const left = {
+    users: [{ id: 1, name: "Ada" }],
+    flags: ["old", "keep"],
+  };
+  const right = {
+    users: [{ id: 1, name: "Ada Lovelace" }, { id: 2, name: "Linus" }],
+    flags: ["old", "changed", "new"],
+  };
+  const differences = compareJSONValues(left, right);
+
+  expect(applyDiffToLeft(left, differences)).toEqual(right);
 });
 
 test("validates a useful subset of JSON Schema", () => {

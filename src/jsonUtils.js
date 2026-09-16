@@ -502,8 +502,37 @@ const toPointer = (path) => {
     .join("/")}`;
 };
 
+const getArrayRemoval = (difference) => {
+  if (difference.type !== "removed") return null;
+  const match = /^(.*)\[(\d+)\]$/.exec(difference.path || "");
+  return match ? { parentPath: match[1], index: Number(match[2]) } : null;
+};
+
+const orderDifferencesForApplication = (differences) => {
+  const removalGroups = new Map();
+  differences.forEach((difference) => {
+    const removal = getArrayRemoval(difference);
+    if (!removal) return;
+    const group = removalGroups.get(removal.parentPath) || [];
+    group.push({ difference, index: removal.index });
+    removalGroups.set(removal.parentPath, group);
+  });
+
+  removalGroups.forEach((group) => group.sort((left, right) => right.index - left.index));
+  const groupOffsets = new Map();
+
+  return differences.map((difference) => {
+    const removal = getArrayRemoval(difference);
+    if (!removal) return difference;
+    const group = removalGroups.get(removal.parentPath);
+    const offset = groupOffsets.get(removal.parentPath) || 0;
+    groupOffsets.set(removal.parentPath, offset + 1);
+    return group[offset].difference;
+  });
+};
+
 export const toJsonPatch = (differences) =>
-  differences.map((diff) => {
+  orderDifferencesForApplication(differences).map((diff) => {
     if (diff.type === "added") return { op: "add", path: toPointer(diff.path), value: diff.value };
     if (diff.type === "removed") return { op: "remove", path: toPointer(diff.path) };
     return { op: "replace", path: toPointer(diff.path), value: diff.newValue };
@@ -511,7 +540,7 @@ export const toJsonPatch = (differences) =>
 
 export const applyDiffToLeft = (left, differences) => {
   const clone = JSON.parse(JSON.stringify(left));
-  differences.forEach((diff) => {
+  orderDifferencesForApplication(differences).forEach((diff) => {
     if (!diff.path || diff.path === "root") return;
     const tokens = diff.path.match(/[^.[\]]+/g) || [];
     const last = tokens.pop();
