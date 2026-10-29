@@ -38,6 +38,57 @@ test("repairs single quoted strings without unsafe manual escaping", () => {
   });
 });
 
+describe("repair preserves string data (#10)", () => {
+  test.each([
+    "keep /* literal */ text",
+    "keep // literal text",
+    "https://example.com/a//b?q=/*literal*/",
+    "commas , } and , ] are text",
+    "{unquoted: text, other: text}",
+    "Bob's account and 'quoted' words",
+    'escaped "quotes" before /* text */',
+    String.raw`backslashes \\ and literal \u0041`,
+    "line one\n// line two\n/* line three */",
+    "emoji 🧩 and unicode 雪",
+  ])("leaves valid JSON unchanged: %s", (value) => {
+    const source = JSON.stringify({ value, nested: [{ [value]: value }] }, null, 2);
+    expect(repairJSONish(source)).toBe(source);
+  });
+
+  test("repairs syntax around protected strings and actual comments", () => {
+    const source = String.raw`{
+      // actual line comment
+      message: 'keep /* literal */ and // text',
+      url: "https://example.com/a//b",
+      owner: 'Bob\'s account',
+      punctuation: ', } and , ]',
+      values: [1, /* actual block comment */ 2,],
+      /* block comment across
+         multiple lines */
+      enabled: true,
+    }`;
+    expect(JSON.parse(repairJSONish(source))).toEqual({
+      message: "keep /* literal */ and // text",
+      url: "https://example.com/a//b",
+      owner: "Bob's account",
+      punctuation: ", } and , ]",
+      values: [1, 2],
+      enabled: true,
+    });
+  });
+
+  test("single-quote conversion decodes escapes once", () => {
+    const source = String.raw`{literal: '\\u0041', unicode: '\u0041', quote: '\u0022', slash: '\\'}`;
+    expect(JSON.parse(repairJSONish(source))).toEqual({
+      literal: String.raw`\u0041`, unicode: "A", quote: '"', slash: "\\",
+    });
+  });
+
+  test("removing a comment does not join separate numeric tokens", () => {
+    expect(() => JSON.parse(repairJSONish('{"value":1/* comment */2}'))).toThrow();
+  });
+});
+
 test("returns path parents without ad hoc bracket cleanup", () => {
   expect(getPathParents("users[1].profile.email")).toEqual([
     "users",
