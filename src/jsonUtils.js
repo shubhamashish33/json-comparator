@@ -137,34 +137,76 @@ export const parseJSONDetailed = (text) => {
   }
 };
 
+const repairSyntax = (text) => text
+  .replace(/,\s*([}\]])/g, "$1")
+  .replace(/([{,]\s*)([A-Za-z_$][\w$-]*)(\s*:)/g, '$1"$2"$3');
+
+const findQuotedEnd = (text, start) => {
+  const quote = text[start];
+  for (let index = start + 1; index < text.length; index += 1) {
+    if (text[index] === "\\") index += 1;
+    else if (text[index] === quote) return index + 1;
+  }
+  return -1;
+};
+
+const normalizeSingleQuotedString = (text) => {
+  const escapes = { "'": "'", '"': '"', "\\": "\\", "/": "/", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t" };
+  // Decode each escape once: an escaped backslash before "u0041" is literal.
+  const value = text.slice(1, -1).replace(/\\(u[0-9a-fA-F]{4}|['"\\/bfnrt])/g, (_, escape) => (
+    escape[0] === "u" ? String.fromCharCode(parseInt(escape.slice(1), 16)) : escapes[escape]
+  ));
+  return JSON.stringify(value);
+};
+
 export const repairJSONish = (text) => {
-  let repaired = text
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/(^|[^:])\/\/.*$/gm, "$1")
-    .replace(/,\s*([}\]])/g, "$1");
+  const output = [];
+  let syntax = [];
+  let segmentStart = 0;
+  let index = 0;
 
-  repaired = repaired.replace(/([{,]\s*)([A-Za-z_$][\w$-]*)(\s*:)/g, '$1"$2"$3');
-  repaired = repaired.replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/g, (_, value) => {
-    const normalized = value
-      .replace(/\\u([0-9a-fA-F]{4})/g, (_, code) => String.fromCharCode(parseInt(code, 16)))
-      .replace(/\\(['"\\/bfnrt])/g, (_, escaped) => {
-        const escapes = {
-          "'": "'",
-          '"': '"',
-          "\\": "\\",
-          "/": "/",
-          b: "\b",
-          f: "\f",
-          n: "\n",
-          r: "\r",
-          t: "\t",
-        };
-        return escapes[escaped];
-      });
-    return JSON.stringify(normalized);
-  });
+  while (index < text.length) {
+    const character = text[index];
+    if (character === '"' || character === "'") {
+      syntax.push(text.slice(segmentStart, index));
+      output.push(repairSyntax(syntax.join("")));
+      syntax = [];
+      const end = findQuotedEnd(text, index);
+      if (end === -1) {
+        // Keep incomplete strings intact rather than repairing their contents.
+        output.push(text.slice(index));
+        segmentStart = text.length;
+        break;
+      }
+      const quoted = text.slice(index, end);
+      output.push(character === "'" ? normalizeSingleQuotedString(quoted) : quoted);
+      index = end;
+      segmentStart = end;
+      continue;
+    }
 
-  return repaired;
+    if (character === "/" && (text[index + 1] === "/" || text[index + 1] === "*")) {
+      let end;
+      if (text[index + 1] === "/") {
+        end = index + 2;
+        while (end < text.length && text[end] !== "\n" && text[end] !== "\r") end += 1;
+      } else {
+        const closing = text.indexOf("*/", index + 2);
+        if (closing === -1) break;
+        end = closing + 2;
+      }
+      syntax.push(text.slice(segmentStart, index), " ");
+      // Whitespace prevents comments from joining otherwise separate tokens.
+      index = end;
+      segmentStart = end;
+      continue;
+    }
+    index += 1;
+  }
+
+  syntax.push(text.slice(segmentStart));
+  output.push(repairSyntax(syntax.join("")));
+  return output.join("");
 };
 
 export const stableStringify = (value) => {
