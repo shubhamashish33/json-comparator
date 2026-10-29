@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { TREE_PAGE_SIZE } from "../workbenchConfig";
 import { collectTreeEntries, parsePath, formatPath, stringify, valueType } from "../workbenchOperations";
@@ -24,7 +24,11 @@ const TreeNode = ({
   const selectedParts = parsePath(selectedPath);
   const isSelectedAncestor = selectedPath && selectedParts.length > pathParts.length && pathParts.every((part, index) => part === selectedParts[index]);
   const forcedKey = isSelectedAncestor ? selectedParts[pathParts.length] : null;
-  const { entries, childCount } = collectTreeEntries(value, visibleCount, forcedKey);
+  // Selection changes should not rescan every key in each visible container.
+  const { entries, childCount } = useMemo(
+    () => collectTreeEntries(value, open ? visibleCount : 0, forcedKey),
+    [value, open, visibleCount, forcedKey]
+  );
   const preview = isContainer
     ? isArray ? `[${open ? "" : `${value.length} items`}]` : `{${open ? "" : `${childCount} keys`}}`
     : stringify(value, 0);
@@ -37,6 +41,17 @@ const TreeNode = ({
     <div className="text-sm">
       <div
         data-path={path}
+        role="button"
+        tabIndex={0}
+        aria-expanded={isContainer ? Boolean(open) : undefined}
+        aria-label={`${path || "root"}: ${valueType(value)}`}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          event.stopPropagation();
+          onSelect(path, event);
+          if (isContainer) setOpen((current) => !current);
+        }}
         onClick={(event) => {
           event.stopPropagation();
           onSelect(path, event);
