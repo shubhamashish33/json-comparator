@@ -26,7 +26,6 @@ iframe#webpack-dev-server-client-overlay {
 }
 
 body { font-family: inherit; }
-button, input, select, textarea { font: inherit; }
 button, a, summary { -webkit-tap-highlight-color: transparent; }
 button:not(:disabled), summary { cursor: pointer; }
 :focus-visible { outline: 2px solid #22d3ee; outline-offset: 3px; }
