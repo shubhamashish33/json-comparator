@@ -90,13 +90,13 @@ return value;`}</CodeBlock>
           </HelpSection>
 
           <HelpSection icon={GitCompare} title="Compare">
-            <p>Compare mode has three views: Edit inputs, Text diff, and Semantic tree.</p>
+            <p>Compare mode has two views: Text and Tree. Text lets you edit both sides and highlights text differences as you type.</p>
             <ol className="list-decimal space-y-2 pl-5">
               <li>Choose an open document for each side, or keep the right side as Temporary input.</li>
-              <li>Use Edit inputs to paste or edit either side. Editing a selected right document turns it into temporary input so the original tab is not changed.</li>
-              <li>Click Compare.</li>
-              <li>The side-by-side Monaco diff opens automatically.</li>
-              <li>Switch to Semantic tree and use Prev or Next to review changes by JSON path.</li>
+              <li>Use Text to paste or edit either side. Editing a selected right document turns it into temporary input so the original tab is not changed.</li>
+              <li>Click Compare values.</li>
+              <li>Filter structural results or download JSON Patch and merged JSON from Export. Edit either input and compare again to refresh the results.</li>
+              <li>Switch to Tree and use Previous or Next to review changes by JSON path.</li>
             </ol>
             <p>Diff paths are highlighted in both trees, and the active diff panel shows the focused left/right value preview.</p>
             <p>When using an object match key, duplicate keys are retained and compared in appearance order with stable occurrence identifiers so duplicate differences remain individually identifiable without index overlap. Extra duplicates are reported as added or removed. Items missing the key preserve true positional fallback semantics by comparing at their array index, and numeric and string key values are normalized while respecting comparison settings.</p>

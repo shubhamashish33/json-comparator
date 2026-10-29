@@ -1510,8 +1510,8 @@ const JSONCompare = () => {
                 <details className="relative">
                   <summary className="flex min-h-9 cursor-pointer list-none items-center gap-2 rounded-md border border-slate-700 px-3 py-2 text-xs text-slate-300"><Download className="h-4 w-4" />Export</summary>
                   <div className="absolute right-0 top-11 z-40 grid w-48 gap-1 rounded-lg border border-slate-700 bg-[#101419] p-1.5 shadow-xl">
-                    <button onClick={() => downloadText("json-patch.json", stringify(patch, 2))} className="rounded px-3 py-2 text-left text-xs hover:bg-slate-800">Download JSON Patch</button>
-                    <button onClick={() => leftParsed.value !== null && downloadText("merged-output.json", stringify(applyDiffToLeft(leftParsed.value, comparison), 2))} disabled={leftParsed.value === null || Boolean(leftParsed.error)} className="rounded px-3 py-2 text-left text-xs hover:bg-slate-800 disabled:opacity-40">Download merged JSON</button>
+                    <button onClick={() => downloadText("json-patch.json", stringify(patch, 2))} disabled={compareStatus.progress !== 100 || compareStatus.busy} className="rounded px-3 py-2 text-left text-xs hover:bg-slate-800 disabled:opacity-40">Download JSON Patch</button>
+                    <button onClick={() => leftParsed.value !== null && downloadText("merged-output.json", stringify(applyDiffToLeft(leftParsed.value, comparison), 2))} disabled={compareStatus.progress !== 100 || compareStatus.busy || leftParsed.value === null || Boolean(leftParsed.error)} className="rounded px-3 py-2 text-left text-xs hover:bg-slate-800 disabled:opacity-40">Download merged JSON</button>
                   </div>
                 </details>
               </div>
