@@ -18,6 +18,9 @@ export const ErrorMessage = ({ error, onJump }) => {
 
 export const ToolbarButton = ({ children, onClick, disabled, active, title }) => (
   <button
+    type="button"
+    aria-label={title}
+    aria-pressed={active === undefined ? undefined : Boolean(active)}
     title={title}
     disabled={disabled}
     onClick={onClick}

@@ -9,7 +9,7 @@ import Editor, { DiffEditor } from "@monaco-editor/react";
 import Ajv from "ajv";
 import jmespath from "jmespath";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   ArrowLeftRight,
   ArrowUp,
@@ -55,6 +55,7 @@ import {
 
 const JSONCompare = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const leftFileRef = useRef(null);
   const rightFileRef = useRef(null);
   const editorRef = useRef(null);
@@ -64,7 +65,7 @@ const JSONCompare = () => {
   const activeTasksRef = useRef(new Map());
   const directEditActiveRef = useRef(false);
   const directEditTimerRef = useRef(null);
-  const [workspaceTab, setWorkspaceTab] = useState("editor");
+  const [workspaceTab, setWorkspaceTab] = useState(() => searchParams.get("tab") === "compare" ? "compare" : "editor");
   const [editorMode, setEditorMode] = useState("code");
   const [compareMode, setCompareMode] = useState("text");
   const [documents, setDocuments] = useState([{ id: "document-1", name: "Document 1.json", text: "" }]);
@@ -828,10 +829,14 @@ const JSONCompare = () => {
     }
   };
 
-  const copyText = (text, type) => {
-    navigator.clipboard.writeText(text);
-    setCopied(type);
-    setTimeout(() => setCopied(""), 1200);
+  const copyText = async (text, type) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(type);
+      setTimeout(() => setCopied(""), 1200);
+    } catch {
+      setStorageNotice("Clipboard access was blocked. Select and copy the text directly.");
+    }
   };
 
   const moveDiff = (direction) => {
@@ -951,6 +956,7 @@ const JSONCompare = () => {
             ].map(([tab, label]) => (
               <button
                 key={tab}
+                aria-pressed={workspaceTab === tab}
                 onClick={() => setWorkspaceTab(tab)}
                 className={`shrink-0 rounded-md px-3 py-2 text-xs font-medium transition-colors ${
                   workspaceTab === tab ? "bg-slate-800 text-white" : "text-slate-400 hover:bg-slate-900 hover:text-white"
@@ -983,7 +989,15 @@ const JSONCompare = () => {
         </div>
       </nav>
 
-      <main className="mx-auto max-w-[120rem] px-3 py-3 sm:px-4">
+      <main id="workspace" className="mx-auto max-w-[120rem] px-3 py-5 sm:px-6">
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-cyan-400">JSON workspace</p>
+            <h1 className="text-2xl font-semibold tracking-tight text-white">{{ editor: "Explore your data", compare: "See what changed", query: "Find exactly what you need", redact: "Share with confidence" }[workspaceTab]}</h1>
+            <p className="mt-1 text-sm text-slate-400">{{ editor: "Edit, format, and inspect your JSON in one place.", compare: "Choose two documents, then compare their values and structure.", query: "Query, transform, or import a JSON document.", redact: "Preview and remove sensitive values before sharing." }[workspaceTab]}</p>
+          </div>
+          <span className="inline-flex items-center gap-2 rounded-full border border-emerald-800/50 bg-emerald-950/20 px-3 py-1.5 text-xs text-emerald-300"><ShieldCheck className="h-3.5 w-3.5" />Browser-local processing</span>
+        </div>
         {workspaceTab !== "compare" && (
         <div className="mb-2 flex min-w-0 items-center gap-1 overflow-x-auto border-b border-slate-800">
           {documents.map((document) => (
@@ -1017,6 +1031,7 @@ const JSONCompare = () => {
               {modeButtons.map(([mode, label, Icon]) => (
                 <button
                   key={mode}
+                  aria-pressed={editorMode === mode}
                   onClick={() => setEditorMode(mode)}
                   className={`inline-flex min-h-8 items-center gap-2 rounded px-2.5 py-1.5 text-xs font-medium ${
                     editorMode === mode ? "bg-cyan-400 text-slate-950" : "text-slate-400 hover:bg-slate-900 hover:text-white"
@@ -1083,7 +1098,7 @@ const JSONCompare = () => {
           </div>
         )}
         {storageNotice && (
-          <div className="mb-3 rounded-md border border-yellow-900 bg-yellow-950/20 px-3 py-2 text-xs text-yellow-200">
+          <div role="status" className="mb-3 rounded-md border border-yellow-900 bg-yellow-950/20 px-3 py-2 text-xs text-yellow-200">
             {storageNotice.replace(/\s\d+$/, "")}
           </div>
         )}
@@ -1698,7 +1713,7 @@ const JSONCompare = () => {
             </>
             )}
             <div className="xl:col-span-2 border border-slate-800 bg-[#101419] p-3">
-              {!comparison.length ? <div className="p-6 text-center text-sm text-slate-500">No differences yet, or the documents match.</div> : (
+              {!comparison.length ? <div className="p-6 text-center text-sm text-slate-500">{compareStatus.progress === 100 ? "The documents match. No structural differences found." : compareStatus.busy ? "Comparing documents…" : "Ready when you are. Add two valid JSON documents and select Compare."}</div> : (
                 <div className="grid gap-3 xl:grid-cols-[320px_minmax(0,1fr)]">
                   <div className="border border-slate-800 bg-[#0c0f13] p-3 text-xs">
                     <div className="mb-2 text-slate-500">Difference</div>
