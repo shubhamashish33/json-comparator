@@ -1,3 +1,5 @@
+import { useClipboard } from "./hooks/useClipboard";
+import { CopyToast } from "./components/CopyToast";
 import { useComparisonView } from "./hooks/useComparisonView";
 import { CompareDocumentSelector } from "./components/CompareDocumentSelector";
 import { EditableDiff } from "./components/EditableDiff";
@@ -119,7 +121,7 @@ const JSONCompare = () => {
     setCompareStatus({ busy: false, label: "Idle", progress: 0 });
   }, [leftText, rightText, settings]);
   const [activeDiffIndex, setActiveDiffIndex] = useState(0);
-  const [copied, setCopied] = useState("");
+  const { copied, notification: copyNotification, copyText, dismiss: dismissCopyNotification } = useClipboard();
   const [storageNotice, setStorageNotice] = useState("");
   const [schemaText, setSchemaText] = useState("");
   const [schemaEnabled, setSchemaEnabled] = useState(false);
@@ -852,16 +854,6 @@ const JSONCompare = () => {
     }
   };
 
-  const copyText = async (text, type) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(type);
-      setTimeout(() => setCopied(""), 1200);
-    } catch {
-      setStorageNotice("Clipboard access was blocked. Select and copy the text directly.");
-    }
-  };
-
   const moveDiff = (direction) => {
     if (!filteredComparison.length) return;
     const nextIndex = (activeDiffIndex + direction + filteredComparison.length) % filteredComparison.length;
@@ -936,7 +928,7 @@ const JSONCompare = () => {
     setComparison([]);
     setFilterType("all");
     setActiveDiffIndex(0);
-    setCopied("");
+    dismissCopyNotification();
     setStorageNotice("");
     setSchemaText("");
     setSchemaEnabled(false);
@@ -1650,6 +1642,8 @@ const JSONCompare = () => {
           </section>
         )}
       </main>
+
+      <CopyToast notification={copyNotification} onDismiss={dismissCopyNotification} />
 
       {contextMenu && (
         <div className="fixed z-[60] w-56 border border-slate-700 bg-[#101419] p-1 text-xs shadow-2xl shadow-black/40" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => event.stopPropagation()}>
