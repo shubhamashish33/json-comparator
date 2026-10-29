@@ -96,7 +96,7 @@ return value;`}</CodeBlock>
               <li>Use Text to paste or edit either side. Editing a selected right document turns it into temporary input so the original tab is not changed.</li>
               <li>Click Compare values.</li>
               <li>Filter structural results or download JSON Patch and merged JSON from Export. Edit either input and compare again to refresh the results.</li>
-              <li>Switch to Tree and use Previous or Next to review changes by JSON path.</li>
+              <li>Switch to Tree to compare automatically, then use Previous or Next to review changes by JSON path.</li>
             </ol>
             <p>Diff paths are highlighted in both trees, and the active diff panel shows the focused left/right value preview.</p>
             <p>When using an object match key, duplicate keys are retained and compared in appearance order with stable occurrence identifiers so duplicate differences remain individually identifiable without index overlap. Extra duplicates are reported as added or removed. Items missing the key preserve true positional fallback semantics by comparing at their array index, and numeric and string key values are normalized while respecting comparison settings.</p>

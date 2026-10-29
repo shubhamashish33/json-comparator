@@ -1,3 +1,4 @@
+import { useComparisonView } from "./hooks/useComparisonView";
 import { CompareDocumentSelector } from "./components/CompareDocumentSelector";
 import { EditableDiff } from "./components/EditableDiff";
 import { QueryPanel } from "./components/QueryPanel";
@@ -202,7 +203,7 @@ const JSONCompare = () => {
   const parseInWorker = useCallback((text, setParsed) => {
     let stale = false;
     if (!text.trim()) {
-      setParsed({ ...EMPTY_WORKER_PARSE, status: "done", label: "Ready", progress: 100 });
+      setParsed({ ...EMPTY_WORKER_PARSE, sourceText: text, status: "done", label: "Ready", progress: 100 });
       return () => {
         stale = true;
       };
@@ -212,15 +213,15 @@ const JSONCompare = () => {
       if (!stale) setParsed((current) => ({ ...current, status: "working", ...progress }));
     })
       .then((result) => {
-        if (!stale) setParsed({ ...result, status: "done", label: "Ready", progress: 100 });
+        if (!stale) setParsed({ ...result, sourceText: text, status: "done", label: "Ready", progress: 100 });
       })
       .catch((error) => {
         if (stale || error.message === "Canceled") return;
         const parsed = parseJSONDetailed(text);
         if (parsed.error) {
-          setParsed({ ...parsed, index: { rows: [], visited: 0, truncated: false }, status: "error", label: "Invalid JSON", progress: 0 });
+          setParsed({ ...parsed, sourceText: text, index: { rows: [], visited: 0, truncated: false }, status: "error", label: "Invalid JSON", progress: 0 });
         } else {
-          setParsed({ ...parsed, index: buildFallbackIndex(parsed.value), status: "done", label: "Ready", progress: 100 });
+          setParsed({ ...parsed, sourceText: text, index: buildFallbackIndex(parsed.value), status: "done", label: "Ready", progress: 100 });
         }
       });
     return () => {
@@ -229,6 +230,8 @@ const JSONCompare = () => {
   }, [runWorkerTask]);
 
   const isParsingPending =
+    leftParsed.sourceText !== leftText ||
+    rightParsed.sourceText !== rightText ||
     leftText !== debouncedLeftText ||
     rightText !== debouncedRightText ||
     [leftParsed, rightParsed].some((parsed) => parsed.status === "queued" || parsed.status === "working");
@@ -756,6 +759,14 @@ const JSONCompare = () => {
       if (isCurrent() && error.message !== "Canceled") setCompareStatus({ busy: false, label: error.message || "Compare failed", progress: 0 });
     }
   };
+
+  const selectComparisonView = useComparisonView({
+    setMode: setCompareMode,
+    parsing: isParsingPending,
+    busy: compareStatus.busy,
+    complete: compareStatus.progress === 100,
+    runCompare,
+  });
 
   const fetchRemote = async () => {
     try {
@@ -1493,7 +1504,7 @@ const JSONCompare = () => {
             <div className="flex flex-wrap items-center justify-between gap-3 xl:col-span-2">
               <div className="inline-flex gap-1 rounded-lg bg-slate-900/70 p-1" aria-label="Comparison view">
                 {[["text", "Text", Code2], ["tree", "Tree", ListTree]].map(([mode, label, Icon]) => (
-                  <button key={mode} onClick={() => setCompareMode(mode)} aria-pressed={compareMode === mode}
+                  <button key={mode} onClick={() => selectComparisonView(mode)} aria-pressed={compareMode === mode}
                     className={`inline-flex items-center gap-2 rounded-md px-3 py-2 text-xs ${compareMode === mode ? "bg-slate-700 text-white" : "text-slate-400 hover:text-white"}`}>
                     <Icon className="h-4 w-4" />{label}
                   </button>
