@@ -40,7 +40,14 @@ and comparison require no backend or credentials.
 
 ### Project Map
 
-- `src/JSONCompare.js`: workspaces, comparison UI, and state management.
+- `src/App.js`: routing; workspace and help routes load on demand.
+- `src/JSONCompare.js`: workspace state, worker coordination, and user actions.
+- `src/components/`: reusable controls, tree view, node dialog, and query panel.
+- `src/hooks/`: debouncing and modal keyboard/focus behavior.
+- `src/workbenchConfig.js`: storage keys, defaults, examples, and size limits.
+- `src/workbenchOperations.js`: immutable document edits, tree/table helpers,
+  downloads, and storage helpers.
+- `src/workbenchUtils.js`: document creation, replacement, and display utilities.
 - `src/jsonUtils.js`: parsing, repair, comparison, paths, redaction, and exports.
 - `src/jsonUtils.test.js`: utility regression tests.
 - `src/jsonWorker.js`: background parsing, indexing, search, and comparison.
@@ -49,6 +56,22 @@ and comparison require no backend or credentials.
 
 Follow the [Code of Conduct](.github/CODE_OF_CONDUCT.md) and report
 vulnerabilities through the [Security Policy](.github/SECURITY.md).
+
+### Working on the Workspace
+
+Keep document operations independent of React so they can be tested with plain
+JSON inputs. UI components receive data and callbacks; workspace state and
+worker coordination stay in `JSONCompare.js`. Use the existing `ToolbarButton`
+for consistent action styling and accessible names for icon-only controls.
+
+The `/compare` route opens the editor. `/compare?tab=compare` opens comparison
+mode directly. Route loading is deferred so the homepage does not download the
+workspace's editor, query, and schema dependencies immediately.
+
+Tree children are paginated and their entries are memoized. Preserve forced
+selection beyond the current page when changing tree rendering. Keep parsing,
+search, and comparison in the worker, and preserve the lightweight editor
+fallback for large inputs.
 
 ### Change Guidelines
 

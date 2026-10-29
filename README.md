@@ -117,14 +117,16 @@ Comparison uses editable inputs, a Monaco side-by-side text diff, and semantic T
 How it works:
 
 - Open Compare and choose an open document for the left and right sides. The right side can also remain a temporary input.
-- Use `Edit inputs` to paste or edit left and right JSON in Monaco editors.
+- Use `Text` to edit both sides in one Monaco diff editor. Text differences highlight automatically.
 - Editing a selected right document changes it to a temporary input, preserving the source document tab.
-- Click `Compare`.
-- Compare opens the side-by-side text diff automatically.
-- Switch to `Semantic tree` to review differences by JSON path.
+- Click `Compare values` to compute structural differences with your comparison settings.
+- Switch to `Tree` to review differences by JSON path.
 - Both sides render as paged trees.
 - Diff paths are highlighted in the trees.
-- Use the sticky top compare bar for `Prev` / `Next`, filtering, patch export, and merged export.
+- Filter structural results and use `Previous` / `Next` beside the results.
+- Use `Export` to download a JSON Patch or merged JSON after comparing.
+- Editing either input clears structural results; compare again before exporting.
+- Large inputs use lightweight text editors to keep editing responsive.
 - The active diff panel shows path, type, and left/right value previews.
 
 Diff types:

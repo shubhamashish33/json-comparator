@@ -1,19 +1,25 @@
+import { useClipboard } from "./hooks/useClipboard";
+import { CopyToast } from "./components/CopyToast";
+import { useComparisonView } from "./hooks/useComparisonView";
+import { CompareDocumentSelector } from "./components/CompareDocumentSelector";
+import { EditableDiff } from "./components/EditableDiff";
+import { QueryPanel } from "./components/QueryPanel";
+import { useDebounce } from "./hooks/useDebounce";
+import { TreeView } from "./components/TreeView";
+import { NodeDialog } from "./components/NodeDialog";
+import { ErrorMessage, ToolbarButton, EmptyEditorState } from "./components/WorkbenchControls";
+import { STORAGE_KEYS, defaultSettings, sampleLeft, sampleRight, redactionSample, SEARCH_RESULT_LIMIT, PARSE_DEBOUNCE_MS, STORAGE_TEXT_LIMIT, HISTORY_TEXT_LIMIT, WORKER_TIMEOUT_MS, COMPARE_WORKER_TIMEOUT_MS, MONACO_COMPARE_TEXT_LIMIT, MONACO_COMPARE_COMBINED_LIMIT, EMPTY_WORKER_PARSE } from "./workbenchConfig";
+import { clone, stringify, formatPath, parentPathOf, keyOfPath, setAtPath, addAtPath, removeAtPath, clearValuesAtPaths, duplicateAtPath, sortKeysDeep, valueType, buildFallbackIndex, collectTable, downloadText, safeSetStorage, safeSetStorageJSON } from "./workbenchOperations";
 import { Analytics } from "@vercel/analytics/react";
-import Editor, { DiffEditor } from "@monaco-editor/react";
+import Editor from "@monaco-editor/react";
 import Ajv from "ajv";
 import jmespath from "jmespath";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-  AlertCircle,
   ArrowLeftRight,
   ArrowUp,
-  ArrowDown,
-  Braces,
   CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  ClipboardPaste,
   Code2,
   Copy,
   Download,
@@ -23,7 +29,6 @@ import {
   Github,
   GitCompare,
   HelpCircle,
-  Link2,
   ListTree,
   MoreHorizontal,
   Plus,
@@ -52,558 +57,9 @@ import {
   replaceJsonMatches,
 } from "./workbenchUtils";
 
-const STORAGE_KEYS = {
-  left: "json-comparator-json1",
-  right: "json-comparator-json2",
-  settings: "json-comparator-settings",
-  documents: "json-comparator-documents",
-  activeDocument: "json-comparator-active-document",
-  schema: "json-comparator-schema",
-  schemaEnabled: "json-comparator-schema-enabled",
-};
-
-const defaultSettings = {
-  ignoreCase: false,
-  ignoreKeyCase: false,
-  stringNumberEquivalence: false,
-  numberTolerance: 0,
-  arrayMode: "index",
-  arrayMatchKey: "id",
-  ignorePaths: "",
-  includePaths: "",
-};
-
-const sampleLeft = {
-  id: "usr_001",
-  profile: {
-    name: "John Doe",
-    email: "john@example.com",
-    active: true,
-  },
-  roles: ["admin", "editor"],
-  limits: {
-    requestsPerMinute: 120,
-    beta: false,
-  },
-  metadata: {
-    requestId: "abc-1",
-    updatedAt: "2026-01-01T10:00:00Z",
-  },
-};
-
-const sampleRight = {
-  id: "usr_001",
-  profile: {
-    name: "John Doe",
-    email: "john.doe@example.com",
-    active: true,
-  },
-  roles: ["admin", "editor", "reviewer"],
-  limits: {
-    requestsPerMinute: 240,
-    beta: true,
-  },
-  metadata: {
-    requestId: "abc-2",
-    updatedAt: "2026-01-01T10:00:01Z",
-  },
-};
-
-const redactionSample = {
-  user: {
-    email: "john@example.com",
-    password: "correct-horse-battery-staple",
-  },
-  apiKey: "service-key-value",
-  headers: {
-    authorization: "Bearer eyJhbGciOiJIUzI1NiJ9.payload.signature",
-  },
-  databaseUrl: "postgres://app:database-password@db.example.com/app",
-  metadata: {
-    requestId: "req_123",
-  },
-};
-
-const TREE_PAGE_SIZE = 200;
-const TABLE_ROW_LIMIT = 1000;
-const TABLE_COLUMN_SAMPLE = 250;
-const SEARCH_RESULT_LIMIT = 500;
-const PARSE_DEBOUNCE_MS = 350;
-const STORAGE_TEXT_LIMIT = 750_000;
-const HISTORY_TEXT_LIMIT = 1_000_000;
-const WORKER_TIMEOUT_MS = 15000;
-const COMPARE_WORKER_TIMEOUT_MS = 120000;
-const MONACO_COMPARE_TEXT_LIMIT = 2_000_000;
-const MONACO_COMPARE_COMBINED_LIMIT = 3_000_000;
-const EMPTY_WORKER_PARSE = {
-  value: null,
-  error: null,
-  index: { rows: [], visited: 0, truncated: false },
-  status: "idle",
-  label: "Idle",
-  progress: 0,
-};
-
-const useDebounce = (value, delay) => {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const timer = setTimeout(() => setDebounced(value), delay);
-    return () => clearTimeout(timer);
-  }, [delay, value]);
-  return debounced;
-};
-
-const stringify = (value, spacing = 2) => {
-  try {
-    return JSON.stringify(value, null, spacing);
-  } catch {
-    return String(value);
-  }
-};
-
-const clone = (value) => JSON.parse(JSON.stringify(value));
-
-const parsePath = (path) => {
-  if (!path) return [];
-  return path.match(/[^.[\]]+/g) || [];
-};
-
-const formatPath = (base, key, parentIsArray = false) => {
-  if (!base) return parentIsArray ? `[${key}]` : String(key);
-  return parentIsArray ? `${base}[${key}]` : `${base}.${key}`;
-};
-
-const parentPathOf = (path) => {
-  const parts = parsePath(path);
-  parts.pop();
-  return parts.reduce((current, part, index) => {
-    const isIndex = /^\d+$/.test(part);
-    if (index === 0) return isIndex ? `[${part}]` : part;
-    return isIndex ? `${current}[${part}]` : `${current}.${part}`;
-  }, "");
-};
-
-const keyOfPath = (path) => parsePath(path).at(-1) || "";
-
-const setAtPath = (source, path, nextValue, nextKey) => {
-  if (!path) return nextValue;
-  const next = clone(source);
-  const parts = parsePath(path);
-  const last = parts.pop();
-  const parent = parts.reduce((cursor, part) => cursor?.[part], next);
-  if (!parent || last === undefined) return next;
-  if (nextKey && !Array.isArray(parent) && nextKey !== last) {
-    delete parent[last];
-    parent[nextKey] = nextValue;
-  } else {
-    parent[last] = nextValue;
-  }
-  return next;
-};
-
-const addAtPath = (source, parentPath, key, value) => {
-  const next = clone(source);
-  const target = parentPath ? getValueAtPath(next, parentPath) : next;
-  if (Array.isArray(target)) target.push(value);
-  else if (target && typeof target === "object") target[key || `key_${Object.keys(target).length + 1}`] = value;
-  return next;
-};
-
-const removeAtPath = (source, path) => {
-  if (!path) return source;
-  const next = clone(source);
-  const parts = parsePath(path);
-  const last = parts.pop();
-  const parent = parts.reduce((cursor, part) => cursor?.[part], next);
-  if (!parent || last === undefined) return next;
-  if (Array.isArray(parent)) parent.splice(Number(last), 1);
-  else delete parent[last];
-  return next;
-};
-
-const emptyValueFor = (value) => {
-  if (Array.isArray(value)) return [];
-  if (value && typeof value === "object") return {};
-  if (typeof value === "string") return "";
-  return null;
-};
-
-const clearValuesAtPaths = (source, paths) => {
-  const next = clone(source);
-  [...paths].filter(Boolean).forEach((path) => {
-    const parts = parsePath(path);
-    const last = parts.pop();
-    const parent = parts.reduce((cursor, part) => cursor?.[part], next);
-    if (!parent || last === undefined || !(last in parent)) return;
-    parent[last] = emptyValueFor(parent[last]);
-  });
-  return next;
-};
-
-const duplicateAtPath = (source, path) => {
-  const value = getValueAtPath(source, path);
-  const parentPath = parentPathOf(path);
-  const key = keyOfPath(path);
-  const parent = parentPath ? getValueAtPath(source, parentPath) : source;
-  if (Array.isArray(parent)) return addAtPath(source, parentPath, "", clone(value));
-  return addAtPath(source, parentPath, `${key}_copy`, clone(value));
-};
-
-const sortKeysDeep = (value) => {
-  if (Array.isArray(value)) return value.map(sortKeysDeep);
-  if (value && typeof value === "object") {
-    return Object.keys(value).sort().reduce((acc, key) => {
-      acc[key] = sortKeysDeep(value[key]);
-      return acc;
-    }, {});
-  }
-  return value;
-};
-
-const parseTypedValue = (raw, type) => {
-  if (type === "string") return raw;
-  if (type === "number") return Number(raw);
-  if (type === "boolean") return raw === "true";
-  if (type === "null") return null;
-  if (type === "object" && !raw.trim()) return {};
-  if (type === "array" && !raw.trim()) return [];
-  const parsed = parseJSONDetailed(raw || "null");
-  if (parsed.error) throw parsed.error;
-  return parsed.value;
-};
-
-const valueType = (value) => {
-  if (Array.isArray(value)) return "array";
-  if (value === null) return "null";
-  return typeof value;
-};
-
-const collectTreeEntries = (value, visibleCount, forcedKey) => {
-  if (!value || typeof value !== "object") return { entries: [], childCount: 0 };
-  if (Array.isArray(value)) {
-    const entries = Array.from({ length: Math.min(value.length, visibleCount) }, (_, index) => [index, value[index]]);
-    const forcedIndex = forcedKey !== null && forcedKey !== undefined ? Number(forcedKey) : -1;
-    if (Number.isInteger(forcedIndex) && forcedIndex >= visibleCount && forcedIndex < value.length) entries.push([forcedIndex, value[forcedIndex]]);
-    return {
-      entries,
-      childCount: value.length,
-    };
-  }
-
-  const entries = [];
-  let childCount = 0;
-  let forcedEntry = null;
-  for (const key in value) {
-    if (Object.prototype.hasOwnProperty.call(value, key)) {
-      if (entries.length < visibleCount) entries.push([key, value[key]]);
-      else if (key === forcedKey) forcedEntry = [key, value[key]];
-      childCount += 1;
-    }
-  }
-  if (forcedEntry && !entries.some(([key]) => key === forcedKey)) entries.push(forcedEntry);
-  return { entries, childCount };
-};
-
-const buildFallbackIndex = (value, limit = 5000) => {
-  if (value === null || value === undefined) return { rows: [], visited: 0, truncated: false };
-  const rows = [];
-  const stack = [{ node: value, path: "" }];
-  let visited = 0;
-
-  while (stack.length) {
-    const { node, path } = stack.pop();
-    visited += 1;
-    if (rows.length < limit) {
-      rows.push({
-        path: path || "root",
-        type: valueType(node),
-        value: node && typeof node === "object" ? stringify(node, 0) : node,
-      });
-    }
-
-    if (node && typeof node === "object") {
-      const entries = Array.isArray(node)
-        ? Array.from({ length: node.length }, (_, index) => [index, node[index]])
-        : Object.keys(node).map((key) => [key, node[key]]);
-      for (let index = entries.length - 1; index >= 0; index -= 1) {
-        const [key, child] = entries[index];
-        stack.push({ node: child, path: formatPath(path, key, Array.isArray(node)) });
-      }
-    }
-  }
-
-  return { rows, visited, truncated: rows.length >= limit && visited > rows.length };
-};
-
-const collectTable = (value) => {
-  if (!Array.isArray(value)) return { rows: [], columns: [] };
-  const rows = [];
-  const columns = new Set();
-  for (let index = 0; index < value.length && rows.length < TABLE_ROW_LIMIT; index += 1) {
-    const row = value[index];
-    if (!row || typeof row !== "object" || Array.isArray(row)) continue;
-    rows.push({ row, sourceIndex: index });
-    if (rows.length <= TABLE_COLUMN_SAMPLE) Object.keys(row).forEach((key) => columns.add(key));
-  }
-  return { rows, columns: Array.from(columns), total: value.length, truncated: value.length > rows.length };
-};
-
-const downloadText = (name, text, type = "application/json") => {
-  const blob = new Blob([text], { type });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = name;
-  anchor.click();
-  URL.revokeObjectURL(url);
-};
-
-const safeSetStorage = (key, value) => {
-  try {
-    if (!value || value.length > STORAGE_TEXT_LIMIT) {
-      localStorage.removeItem(key);
-      return false;
-    }
-    localStorage.setItem(key, value);
-    return true;
-  } catch {
-    try {
-      localStorage.removeItem(key);
-    } catch {
-      // Ignore unavailable storage.
-    }
-    return false;
-  }
-};
-
-const safeSetStorageJSON = (key, value) => {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // Settings are non-critical.
-  }
-};
-
-const ErrorMessage = ({ error, onJump }) => {
-  if (!error) return null;
-  return (
-    <button
-      type="button"
-      onClick={onJump}
-      className={`flex w-full items-start gap-2 rounded-md border border-red-900/70 bg-red-950/30 p-2 text-left text-xs text-red-200 ${onJump ? "hover:border-red-700 hover:bg-red-950/50" : "cursor-default"}`}
-    >
-      <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
-      <span className="flex-1">{error.message}{error.line ? ` at ${error.line}:${error.column}` : ""}</span>
-      {onJump && <span className="shrink-0 text-red-300">Jump to error</span>}
-    </button>
-  );
-};
-
-const ToolbarButton = ({ children, onClick, disabled, active, title }) => (
-  <button
-    title={title}
-    disabled={disabled}
-    onClick={onClick}
-    className={`inline-flex min-h-9 shrink-0 items-center gap-2 rounded-md border px-3 py-2 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-cyan-500/60 disabled:cursor-not-allowed disabled:opacity-40 ${
-      active ? "border-cyan-400 bg-cyan-400 text-slate-950" : "border-slate-700 bg-[#101419] text-slate-200 hover:border-slate-600 hover:bg-slate-900"
-    }`}
-  >
-    {children}
-  </button>
-);
-
-const EmptyEditorState = ({ onPaste, onOpen, onSample }) => (
-  <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#0c0f13] p-6">
-    <div className="max-w-lg text-center">
-      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl border border-cyan-500/30 bg-cyan-500/10 text-cyan-300">
-        <Braces className="h-6 w-6" />
-      </div>
-      <h2 className="mt-5 text-xl font-semibold text-white">Paste JSON to begin</h2>
-      <p className="mt-2 text-sm leading-6 text-slate-400">
-        Paste from your clipboard, open a file, or drop a .json or .jsonc file here.
-      </p>
-      <div className="mt-5 flex flex-wrap justify-center gap-2">
-        <ToolbarButton onClick={onPaste} active title="Paste JSON from the clipboard">
-          <ClipboardPaste className="h-4 w-4" />Paste JSON
-        </ToolbarButton>
-        <ToolbarButton onClick={onOpen} title="Open a JSON file">
-          <Upload className="h-4 w-4" />Open file
-        </ToolbarButton>
-        <ToolbarButton onClick={onSample} title="Load example JSON">Load example</ToolbarButton>
-      </div>
-      <div className="mt-5 inline-flex items-center gap-2 rounded-full border border-emerald-900/70 bg-emerald-950/20 px-3 py-1.5 text-xs text-emerald-200">
-        <ShieldCheck className="h-3.5 w-3.5" />Processed locally in this browser
-      </div>
-    </div>
-  </div>
-);
-
-const TreeNode = ({
-  nodeKey,
-  value,
-  path,
-  level,
-  selectedPath,
-  selectedPaths,
-  matches,
-  onSelect,
-  onContextMenu,
-}) => {
-  const [open, setOpen] = useState(level < 2);
-  const [visibleCount, setVisibleCount] = useState(TREE_PAGE_SIZE);
-  const isContainer = value && typeof value === "object";
-  const isArray = Array.isArray(value);
-  const selected = selectedPath === path || selectedPaths.has(path);
-  const matched = matches.has(path);
-  const pathParts = parsePath(path);
-  const selectedParts = parsePath(selectedPath);
-  const isSelectedAncestor = selectedPath && selectedParts.length > pathParts.length && pathParts.every((part, index) => part === selectedParts[index]);
-  const forcedKey = isSelectedAncestor ? selectedParts[pathParts.length] : null;
-  const { entries, childCount } = collectTreeEntries(value, visibleCount, forcedKey);
-  const preview = isContainer
-    ? isArray ? `[${open ? "" : `${value.length} items`}]` : `{${open ? "" : `${childCount} keys`}}`
-    : stringify(value, 0);
-
-  useEffect(() => {
-    if (isContainer && isSelectedAncestor) setOpen(true);
-  }, [isContainer, isSelectedAncestor]);
-
-  return (
-    <div className="text-sm">
-      <div
-        data-path={path}
-        onClick={(event) => {
-          event.stopPropagation();
-          onSelect(path, event);
-          if (isContainer) setOpen((current) => !current);
-        }}
-        onContextMenu={(event) => onContextMenu(path, event)}
-        className={`group flex min-h-8 cursor-default items-center gap-2 px-2 py-1 hover:bg-slate-800 ${
-          selected ? "bg-cyan-500/15 ring-1 ring-cyan-500" : matched ? "bg-yellow-500/10" : ""
-        }`}
-        style={{ paddingLeft: `${level * 16 + 8}px` }}
-      >
-        <span className="w-4 text-slate-500">{isContainer ? open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" /> : null}</span>
-        <span className="text-blue-300">{String(nodeKey)}</span>
-        <span className="text-slate-600">:</span>
-        <span className={isContainer ? "text-cyan-300" : "break-all text-emerald-300"}>{preview}</span>
-        <span className="ml-auto text-[10px] uppercase text-slate-600">{valueType(value)}</span>
-      </div>
-      {isContainer && open && entries.map(([key, child]) => (
-        <TreeNode
-          key={`${path}.${key}`}
-          nodeKey={key}
-          value={child}
-          path={formatPath(path, key, isArray)}
-          level={level + 1}
-          selectedPath={selectedPath}
-          selectedPaths={selectedPaths}
-          matches={matches}
-          onSelect={onSelect}
-          onContextMenu={onContextMenu}
-        />
-      ))}
-      {isContainer && open && childCount > visibleCount && (
-        <button
-          onClick={(event) => {
-            event.stopPropagation();
-            setVisibleCount((current) => current + TREE_PAGE_SIZE);
-          }}
-          className="ml-8 mt-1 border border-slate-800 bg-[#101419] px-3 py-1.5 text-xs text-cyan-300 hover:bg-slate-900"
-          style={{ marginLeft: `${(level + 1) * 16 + 8}px` }}
-        >
-          Show next {Math.min(TREE_PAGE_SIZE, childCount - visibleCount)} of {childCount}
-        </button>
-      )}
-    </div>
-  );
-};
-
-const TreeView = ({ value, selectedPath, selectedPaths, matches, onSelect, onContextMenu }) => {
-  const treeRef = useRef(null);
-  useEffect(() => {
-    if (!selectedPath) return;
-    const timer = window.setTimeout(() => {
-      const nodes = treeRef.current?.querySelectorAll("[data-path]");
-      const target = nodes ? Array.from(nodes).find((node) => node.dataset.path === selectedPath) : null;
-      target?.scrollIntoView({ block: "center" });
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [selectedPath]);
-
-  if (value === null || value === undefined) return <div className="p-8 text-center text-sm text-slate-500">Paste or load JSON to start.</div>;
-  return (
-    <div ref={treeRef} className="h-full overflow-auto bg-[#0c0f13] p-2 font-mono">
-      <TreeNode
-        nodeKey="root"
-        value={value}
-        path=""
-        level={0}
-        selectedPath={selectedPath}
-        selectedPaths={selectedPaths}
-        matches={matches}
-        onSelect={onSelect}
-        onContextMenu={onContextMenu}
-      />
-    </div>
-  );
-};
-
-const NodeDialog = ({ mode, node, parentPath, onClose, onSave }) => {
-  const [key, setKey] = useState(node?.key || "");
-  const [type, setType] = useState(node?.type || "string");
-  const [raw, setRaw] = useState(node?.raw || "");
-  const [error, setError] = useState(null);
-
-  const save = () => {
-    try {
-      const value = parseTypedValue(raw, type);
-      onSave({ key, value, parentPath });
-    } catch (err) {
-      setError({ message: err.message || "Invalid value" });
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4">
-      <div className="w-full max-w-xl border border-slate-700 bg-[#101419] p-5 shadow-2xl shadow-black/50">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-white">{mode === "add" ? "Add node" : "Edit node"}</h2>
-          <button onClick={onClose} className="p-1 text-slate-400 hover:bg-slate-800"><X className="h-4 w-4" /></button>
-        </div>
-        <div className="grid gap-3">
-          <label className="text-xs uppercase text-slate-500">Key</label>
-          <input value={key} onChange={(event) => setKey(event.target.value)} className="border border-slate-700 bg-[#0b0d10] px-3 py-2 text-sm text-white outline-none focus:border-cyan-500" />
-          <label className="text-xs uppercase text-slate-500">Type</label>
-          <select value={type} onChange={(event) => setType(event.target.value)} className="border border-slate-700 bg-[#0b0d10] px-3 py-2 text-sm text-white outline-none focus:border-cyan-500">
-            <option value="string">String</option>
-            <option value="number">Number</option>
-            <option value="boolean">Boolean</option>
-            <option value="null">Null</option>
-            <option value="object">Object</option>
-            <option value="array">Array</option>
-          </select>
-          <label className="text-xs uppercase text-slate-500">Value</label>
-          <textarea
-            value={raw}
-            onChange={(event) => setRaw(event.target.value)}
-            disabled={type === "null"}
-            rows={type === "object" || type === "array" ? 8 : 3}
-            className="border border-slate-700 bg-[#0b0d10] p-3 text-sm text-white outline-none focus:border-cyan-500 disabled:text-slate-600"
-          />
-          {error && <ErrorMessage error={error} />}
-          <div className="flex justify-end gap-2">
-            <ToolbarButton onClick={onClose}>Cancel</ToolbarButton>
-            <ToolbarButton onClick={save} active>Save</ToolbarButton>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
 const JSONCompare = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const leftFileRef = useRef(null);
   const rightFileRef = useRef(null);
   const editorRef = useRef(null);
@@ -613,7 +69,7 @@ const JSONCompare = () => {
   const activeTasksRef = useRef(new Map());
   const directEditActiveRef = useRef(false);
   const directEditTimerRef = useRef(null);
-  const [workspaceTab, setWorkspaceTab] = useState("editor");
+  const [workspaceTab, setWorkspaceTab] = useState(() => searchParams.get("tab") === "compare" ? "compare" : "editor");
   const [editorMode, setEditorMode] = useState("code");
   const [compareMode, setCompareMode] = useState("text");
   const [documents, setDocuments] = useState([{ id: "document-1", name: "Document 1.json", text: "" }]);
@@ -653,8 +109,19 @@ const JSONCompare = () => {
   const [redactionNotice, setRedactionNotice] = useState("");
   const [comparison, setComparison] = useState([]);
   const [filterType, setFilterType] = useState("all");
+  const compareInputsRef = useRef();
+  compareInputsRef.current = { leftText, rightText, settings };
+  const compareRequestRef = useRef(0);
+
+  useEffect(() => {
+    // Structural results belong to the exact inputs and settings compared.
+    compareRequestRef.current += 1;
+    setComparison([]);
+    setActiveDiffIndex(0);
+    setCompareStatus({ busy: false, label: "Idle", progress: 0 });
+  }, [leftText, rightText, settings]);
   const [activeDiffIndex, setActiveDiffIndex] = useState(0);
-  const [copied, setCopied] = useState("");
+  const { copied, notification: copyNotification, copyText, dismiss: dismissCopyNotification } = useClipboard();
   const [storageNotice, setStorageNotice] = useState("");
   const [schemaText, setSchemaText] = useState("");
   const [schemaEnabled, setSchemaEnabled] = useState(false);
@@ -738,7 +205,7 @@ const JSONCompare = () => {
   const parseInWorker = useCallback((text, setParsed) => {
     let stale = false;
     if (!text.trim()) {
-      setParsed({ ...EMPTY_WORKER_PARSE, status: "done", label: "Ready", progress: 100 });
+      setParsed({ ...EMPTY_WORKER_PARSE, sourceText: text, status: "done", label: "Ready", progress: 100 });
       return () => {
         stale = true;
       };
@@ -748,15 +215,15 @@ const JSONCompare = () => {
       if (!stale) setParsed((current) => ({ ...current, status: "working", ...progress }));
     })
       .then((result) => {
-        if (!stale) setParsed({ ...result, status: "done", label: "Ready", progress: 100 });
+        if (!stale) setParsed({ ...result, sourceText: text, status: "done", label: "Ready", progress: 100 });
       })
       .catch((error) => {
         if (stale || error.message === "Canceled") return;
         const parsed = parseJSONDetailed(text);
         if (parsed.error) {
-          setParsed({ ...parsed, index: { rows: [], visited: 0, truncated: false }, status: "error", label: "Invalid JSON", progress: 0 });
+          setParsed({ ...parsed, sourceText: text, index: { rows: [], visited: 0, truncated: false }, status: "error", label: "Invalid JSON", progress: 0 });
         } else {
-          setParsed({ ...parsed, index: buildFallbackIndex(parsed.value), status: "done", label: "Ready", progress: 100 });
+          setParsed({ ...parsed, sourceText: text, index: buildFallbackIndex(parsed.value), status: "done", label: "Ready", progress: 100 });
         }
       });
     return () => {
@@ -765,6 +232,8 @@ const JSONCompare = () => {
   }, [runWorkerTask]);
 
   const isParsingPending =
+    leftParsed.sourceText !== leftText ||
+    rightParsed.sourceText !== rightText ||
     leftText !== debouncedLeftText ||
     rightText !== debouncedRightText ||
     [leftParsed, rightParsed].some((parsed) => parsed.status === "queued" || parsed.status === "working");
@@ -796,12 +265,6 @@ const JSONCompare = () => {
     : Array.isArray(leftParsed.value)
       ? "array"
       : typeof leftParsed.value;
-
-  useEffect(() => {
-    if (useLightweightCompareEditor && compareMode === "diff") {
-      setCompareMode(comparison.length ? "tree" : "text");
-    }
-  }, [compareMode, comparison.length, useLightweightCompareEditor]);
 
   useEffect(() => {
     try {
@@ -1273,25 +736,39 @@ const JSONCompare = () => {
       });
       return;
     }
+    const request = ++compareRequestRef.current;
+    const inputs = compareInputsRef.current;
+    const isCurrent = () => request === compareRequestRef.current &&
+      inputs.leftText === compareInputsRef.current.leftText &&
+      inputs.rightText === compareInputsRef.current.rightText &&
+      inputs.settings === compareInputsRef.current.settings;
     setCompareStatus({ busy: true, label: "Queued compare", progress: 5 });
     setWorkspaceTab("compare");
     try {
       const diffs = await runWorkerTask("diff", { left: leftParsed.value, right: rightParsed.value, settings }, (progress) => {
-        setCompareStatus({ busy: true, ...progress });
+        if (isCurrent()) setCompareStatus({ busy: true, ...progress });
       }, COMPARE_WORKER_TIMEOUT_MS);
+      if (!isCurrent()) return;
       setComparison(diffs);
       setActiveDiffIndex(0);
       if (diffs[0]?.path) setSelectedPath(diffs[0].path);
-      setCompareMode(useLightweightCompareEditor ? "tree" : "diff");
       setCompareStatus({
         busy: false,
         label: useLightweightCompareEditor ? "Compared in large-file tree mode" : "Ready",
         progress: 100,
       });
     } catch (error) {
-      if (error.message !== "Canceled") setCompareStatus({ busy: false, label: error.message || "Compare failed", progress: 0 });
+      if (isCurrent() && error.message !== "Canceled") setCompareStatus({ busy: false, label: error.message || "Compare failed", progress: 0 });
     }
   };
+
+  const selectComparisonView = useComparisonView({
+    setMode: setCompareMode,
+    parsing: isParsingPending,
+    busy: compareStatus.busy,
+    complete: compareStatus.progress === 100,
+    runCompare,
+  });
 
   const fetchRemote = async () => {
     try {
@@ -1377,12 +854,6 @@ const JSONCompare = () => {
     }
   };
 
-  const copyText = (text, type) => {
-    navigator.clipboard.writeText(text);
-    setCopied(type);
-    setTimeout(() => setCopied(""), 1200);
-  };
-
   const moveDiff = (direction) => {
     if (!filteredComparison.length) return;
     const nextIndex = (activeDiffIndex + direction + filteredComparison.length) % filteredComparison.length;
@@ -1457,7 +928,7 @@ const JSONCompare = () => {
     setComparison([]);
     setFilterType("all");
     setActiveDiffIndex(0);
-    setCopied("");
+    dismissCopyNotification();
     setStorageNotice("");
     setSchemaText("");
     setSchemaEnabled(false);
@@ -1500,6 +971,7 @@ const JSONCompare = () => {
             ].map(([tab, label]) => (
               <button
                 key={tab}
+                aria-pressed={workspaceTab === tab}
                 onClick={() => setWorkspaceTab(tab)}
                 className={`shrink-0 rounded-md px-3 py-2 text-xs font-medium transition-colors ${
                   workspaceTab === tab ? "bg-slate-800 text-white" : "text-slate-400 hover:bg-slate-900 hover:text-white"
@@ -1532,7 +1004,15 @@ const JSONCompare = () => {
         </div>
       </nav>
 
-      <main className="mx-auto max-w-[120rem] px-3 py-3 sm:px-4">
+      <main id="workspace" className="mx-auto max-w-[120rem] px-3 py-5 sm:px-6">
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-cyan-400">JSON workspace</p>
+            <h1 className="text-2xl font-semibold tracking-tight text-white">{{ editor: "Explore your data", compare: "See what changed", query: "Find exactly what you need", redact: "Share with confidence" }[workspaceTab]}</h1>
+            <p className="mt-1 text-sm text-slate-400">{{ editor: "Edit, format, and inspect your JSON in one place.", compare: "Edit side by side with live text differences.", query: "Query, transform, or import a JSON document.", redact: "Preview and remove sensitive values before sharing." }[workspaceTab]}</p>
+          </div>
+          <span className="hidden sm:inline-flex items-center gap-2 rounded-full border border-emerald-800/50 bg-emerald-950/20 px-3 py-1.5 text-xs text-emerald-300"><ShieldCheck className="h-3.5 w-3.5" />Browser-local processing</span>
+        </div>
         {workspaceTab !== "compare" && (
         <div className="mb-2 flex min-w-0 items-center gap-1 overflow-x-auto border-b border-slate-800">
           {documents.map((document) => (
@@ -1566,6 +1046,7 @@ const JSONCompare = () => {
               {modeButtons.map(([mode, label, Icon]) => (
                 <button
                   key={mode}
+                  aria-pressed={editorMode === mode}
                   onClick={() => setEditorMode(mode)}
                   className={`inline-flex min-h-8 items-center gap-2 rounded px-2.5 py-1.5 text-xs font-medium ${
                     editorMode === mode ? "bg-cyan-400 text-slate-950" : "text-slate-400 hover:bg-slate-900 hover:text-white"
@@ -1632,7 +1113,7 @@ const JSONCompare = () => {
           </div>
         )}
         {storageNotice && (
-          <div className="mb-3 rounded-md border border-yellow-900 bg-yellow-950/20 px-3 py-2 text-xs text-yellow-200">
+          <div role="status" className="mb-3 rounded-md border border-yellow-900 bg-yellow-950/20 px-3 py-2 text-xs text-yellow-200">
             {storageNotice.replace(/\s\d+$/, "")}
           </div>
         )}
@@ -1844,70 +1325,22 @@ const JSONCompare = () => {
         )}
 
         {workspaceTab === "query" && (
-          <section className="grid gap-3 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-            <div className="space-y-4 rounded-lg border border-slate-800 bg-[#101419] p-4">
-              <div>
-                <h1 className="text-base font-semibold text-white">Query JSON with live results</h1>
-                <p className="mt-1 text-xs leading-5 text-slate-500">Use JMESPath for filtering and projection, or a simple dot path for quick lookup.</p>
-              </div>
-              <label className="grid gap-2 text-xs text-slate-400">
-                Query language
-                <select value={queryLanguage} onChange={(event) => setQueryLanguage(event.target.value)} className="rounded-md border border-slate-700 bg-[#0b0d10] px-3 py-2 text-sm text-white">
-                  <option value="jmespath">JMESPath</option>
-                  <option value="path">Simple path</option>
-                </select>
-              </label>
-              <label className="grid gap-2 text-xs text-slate-400">
-                Expression
-                <textarea
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder={queryLanguage === "jmespath" ? "users[?active].{name: name, email: email}" : "users[0].email"}
-                  rows={4}
-                  className="w-full rounded-md border border-slate-700 bg-[#0b0d10] p-3 font-mono text-sm text-white outline-none focus:border-cyan-500"
-                />
-              </label>
-              <div>
-                <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600">Examples</div>
-                <div className="flex flex-wrap gap-2">
-                  {(queryLanguage === "jmespath"
-                    ? [["First item", "[0]"], ["All IDs", "[*].id"], ["Object keys", "keys(@)"], ["Active items", "[?active]"]]
-                    : [["Profile email", "profile.email"], ["First role", "roles[0]"]]
-                  ).map(([label, expression]) => (
-                    <button key={expression} onClick={() => setQuery(expression)} className="rounded-full border border-slate-700 px-2.5 py-1 text-[11px] text-slate-400 hover:border-cyan-700 hover:text-cyan-200">{label}</button>
-                  ))}
-                </div>
-              </div>
-              <details className="rounded-md border border-slate-800 bg-[#0b0d10]">
-                <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-slate-300">Advanced JavaScript transform</summary>
-                <div className="grid gap-2 border-t border-slate-800 p-3">
-                  <p className="text-[11px] leading-4 text-yellow-200/70">Runs user-authored code locally. Use JMESPath for routine queries.</p>
-                  <textarea value={transformCode} onChange={(event) => setTransformCode(event.target.value)} rows={8} className="w-full rounded border border-slate-700 bg-[#080a0d] p-3 font-mono text-xs text-white outline-none focus:border-cyan-500" />
-                  <ToolbarButton onClick={runTransform}><Wand2 className="h-4 w-4" />Preview transform</ToolbarButton>
-                </div>
-              </details>
-              <details className="rounded-md border border-slate-800 bg-[#0b0d10]">
-                <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-slate-300">Load JSON from a URL</summary>
-                <div className="grid grid-cols-[1fr_auto] gap-2 border-t border-slate-800 p-3">
-                  <input value={fetchUrl} onChange={(event) => setFetchUrl(event.target.value)} placeholder="https://api.example.com/data" className="min-w-0 rounded border border-slate-700 bg-[#080a0d] px-3 py-2 text-xs text-white outline-none focus:border-cyan-500" />
-                  <ToolbarButton onClick={fetchRemote}><Link2 className="h-4 w-4" />Fetch</ToolbarButton>
-                </div>
-              </details>
-            </div>
-            <div className="min-w-0 overflow-hidden rounded-lg border border-slate-800 bg-[#0c0f13]">
-              <div className="flex items-center justify-between gap-2 border-b border-slate-800 px-4 py-3">
-                <div>
-                  <h2 className="text-sm font-semibold text-white">Live result</h2>
-                  <p className="mt-1 text-xs text-slate-500">Updates as you type.</p>
-                </div>
-                <div className="flex gap-2">
-                  <ToolbarButton onClick={() => copyText(queryResult, "query")} disabled={!queryResult}><Copy className="h-4 w-4" />{copied === "query" ? "Copied" : "Copy"}</ToolbarButton>
-                  <ToolbarButton onClick={() => { const parsed = parseJSONDetailed(queryResult); if (!parsed.error) commitValue(parsed.value); }} disabled={Boolean(parseJSONDetailed(queryResult).error)}>Apply to document</ToolbarButton>
-                </div>
-              </div>
-              <pre className="h-[38rem] overflow-auto p-4 font-mono text-sm text-slate-200">{queryResult}</pre>
-            </div>
-          </section>
+          <QueryPanel
+            queryLanguage={queryLanguage}
+            setQueryLanguage={setQueryLanguage}
+            query={query}
+            setQuery={setQuery}
+            transformCode={transformCode}
+            setTransformCode={setTransformCode}
+            runTransform={runTransform}
+            fetchUrl={fetchUrl}
+            setFetchUrl={setFetchUrl}
+            fetchRemote={fetchRemote}
+            queryResult={queryResult}
+            copyText={copyText}
+            copied={copied}
+            commitValue={commitValue}
+          />
         )}
 
         {workspaceTab === "redact" && (
@@ -2059,49 +1492,35 @@ const JSONCompare = () => {
         )}
 
         {workspaceTab === "compare" && (
-          <section className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-            <div className="sticky top-14 z-40 flex flex-wrap items-center gap-2 rounded-lg border border-slate-800 bg-[#101419] p-2 shadow-lg shadow-black/20 xl:col-span-2">
-              <button onClick={() => setCompareMode("text")} className={`inline-flex items-center gap-2 rounded-md border px-3 py-2 text-xs ${compareMode === "text" ? "border-cyan-400 bg-cyan-400 text-slate-950" : "border-slate-700 text-slate-300 hover:bg-slate-900"}`}><Code2 className="h-4 w-4" />Edit inputs</button>
-              <button
-                onClick={() => setCompareMode("diff")}
-                disabled={useLightweightCompareEditor}
-                title={useLightweightCompareEditor ? "Text diff is disabled for large documents to keep the workspace responsive. Use Semantic tree." : "Review a side-by-side text diff"}
-                className={`inline-flex items-center gap-2 rounded-md border px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${compareMode === "diff" ? "border-cyan-400 bg-cyan-400 text-slate-950" : "border-slate-700 text-slate-300 hover:bg-slate-900"}`}
-              >
-                <GitCompare className="h-4 w-4" />Text diff
-              </button>
-              <button onClick={() => setCompareMode("tree")} className={`inline-flex items-center gap-2 rounded-md border px-3 py-2 text-xs ${compareMode === "tree" ? "border-cyan-400 bg-cyan-400 text-slate-950" : "border-slate-700 text-slate-300 hover:bg-slate-900"}`}><ListTree className="h-4 w-4" />Semantic tree</button>
-              <span className="hidden text-xs text-slate-500 lg:inline">Edit both sides, compare, then review as text or by JSON path.</span>
-              <span className="mx-1 h-6 border-l border-slate-800" />
-              <ToolbarButton onClick={runCompare} active disabled={compareStatus.busy}><GitCompare className="h-4 w-4" />{compareStatus.busy ? "Comparing" : "Compare"}</ToolbarButton>
-              {compareStatus.busy && <ToolbarButton onClick={cancelWorkerWork}><X className="h-4 w-4" />Cancel</ToolbarButton>}
-              <select value={filterType} onChange={(event) => setFilterType(event.target.value)} className="shrink-0 border border-slate-700 bg-[#0b0d10] px-3 py-2 text-xs text-white">
-                <option value="all">All</option>
-                <option value="added">Added</option>
-                <option value="removed">Removed</option>
-                <option value="modified">Modified</option>
-              </select>
-              <ToolbarButton onClick={() => moveDiff(-1)} disabled={!filteredComparison.length}><ArrowUp className="h-4 w-4" />Prev</ToolbarButton>
-              <ToolbarButton onClick={() => moveDiff(1)} disabled={!filteredComparison.length}><ArrowDown className="h-4 w-4" />Next</ToolbarButton>
-              <ToolbarButton onClick={() => downloadText("json-patch.json", stringify(patch, 2))}>Patch</ToolbarButton>
-              <ToolbarButton onClick={() => leftParsed.value && downloadText("merged-output.json", stringify(applyDiffToLeft(leftParsed.value, comparison), 2))}>Merged</ToolbarButton>
-              {compareStatus.label !== "Idle" && (
-                <span className={`text-xs ${compareStatus.progress === 0 && !compareStatus.busy ? "text-amber-300" : "text-cyan-300"}`}>
-                  {compareStatus.label} {compareStatus.progress ? `${compareStatus.progress}%` : ""}
-                </span>
-              )}
+          <section className="grid min-w-0 gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+            <div className="flex flex-wrap items-center justify-between gap-3 xl:col-span-2">
+              <div className="inline-flex gap-1 rounded-lg bg-slate-900/70 p-1" aria-label="Comparison view">
+                {[["text", "Text", Code2], ["tree", "Tree", ListTree]].map(([mode, label, Icon]) => (
+                  <button key={mode} onClick={() => selectComparisonView(mode)} aria-pressed={compareMode === mode}
+                    className={`inline-flex items-center gap-2 rounded-md px-3 py-2 text-xs ${compareMode === mode ? "bg-slate-700 text-white" : "text-slate-400 hover:text-white"}`}>
+                    <Icon className="h-4 w-4" />{label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {compareStatus.label !== "Idle" && compareStatus.label !== "Ready" && (
+                  <span role="status" className="text-xs text-slate-400">{compareStatus.label}</span>
+                )}
+                {compareStatus.busy && <ToolbarButton onClick={cancelWorkerWork}>Cancel</ToolbarButton>}
+                <ToolbarButton onClick={runCompare} active disabled={compareStatus.busy}>
+                  <GitCompare className="h-4 w-4" />{compareStatus.busy ? "Comparing…" : "Compare values"}
+                </ToolbarButton>
+                <details className="relative">
+                  <summary className="flex min-h-9 cursor-pointer list-none items-center gap-2 rounded-md border border-slate-700 px-3 py-2 text-xs text-slate-300"><Download className="h-4 w-4" />Export</summary>
+                  <div className="absolute right-0 top-11 z-40 grid w-48 gap-1 rounded-lg border border-slate-700 bg-[#101419] p-1.5 shadow-xl">
+                    <button onClick={() => downloadText("json-patch.json", stringify(patch, 2))} disabled={compareStatus.progress !== 100 || compareStatus.busy} className="rounded px-3 py-2 text-left text-xs hover:bg-slate-800 disabled:opacity-40">Download JSON Patch</button>
+                    <button onClick={() => leftParsed.value !== null && downloadText("merged-output.json", stringify(applyDiffToLeft(leftParsed.value, comparison), 2))} disabled={compareStatus.progress !== 100 || compareStatus.busy || leftParsed.value === null || Boolean(leftParsed.error)} className="rounded px-3 py-2 text-left text-xs hover:bg-slate-800 disabled:opacity-40">Download merged JSON</button>
+                  </div>
+                </details>
+              </div>
             </div>
             <div className="grid items-end gap-2 rounded-lg border border-slate-800 bg-[#101419] p-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] xl:col-span-2">
-              <label className="grid min-w-0 gap-1.5 text-xs text-slate-500">
-                Left document
-                <select
-                  value={activeDocumentId}
-                  onChange={(event) => selectCompareLeftDocument(event.target.value)}
-                  className="min-w-0 rounded-md border border-slate-700 bg-[#0b0d10] px-3 py-2 text-sm text-white outline-none focus:border-cyan-500"
-                >
-                  {documents.map((document) => <option key={document.id} value={document.id}>{document.name}</option>)}
-                </select>
-              </label>
+              <CompareDocumentSelector side="Left" value={activeDocumentId} documents={documents} onChange={selectCompareLeftDocument} onOpen={() => leftFileRef.current?.click()} onClear={clearLeftComparison} canClear={Boolean(leftText)} />
               <button
                 onClick={swapCompareSides}
                 className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-700 px-3 text-xs text-slate-300 hover:border-cyan-700 hover:bg-slate-900 hover:text-cyan-200"
@@ -2109,59 +1528,27 @@ const JSONCompare = () => {
               >
                 <ArrowLeftRight className="h-4 w-4" /><span className="sm:hidden">Swap sides</span>
               </button>
-              <label className="grid min-w-0 gap-1.5 text-xs text-slate-500">
-                Right document
-                <select
-                  value={rightDocumentId}
-                  onChange={(event) => selectCompareRightDocument(event.target.value)}
-                  className="min-w-0 rounded-md border border-slate-700 bg-[#0b0d10] px-3 py-2 text-sm text-white outline-none focus:border-cyan-500"
-                >
-                  <option value="">Temporary input</option>
-                  {documents.filter((document) => document.id !== activeDocumentId).map((document) => (
-                    <option key={document.id} value={document.id}>{document.name}</option>
-                  ))}
-                </select>
-              </label>
+              <CompareDocumentSelector side="Right" value={rightDocumentId} documents={documents.filter((document) => document.id !== activeDocumentId)} onChange={selectCompareRightDocument} onOpen={() => rightFileRef.current?.click()} onClear={clearRightComparison} canClear={Boolean(rightText)} temporary />
             </div>
-            {compareMode === "diff" && !useLightweightCompareEditor && (
-              <div className="overflow-hidden rounded-lg border border-slate-800 bg-[#101419] xl:col-span-2">
-                <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
-                  <div>
-                    <h2 className="text-sm font-semibold text-white">Side-by-side text diff</h2>
-                    <p className="mt-1 text-xs text-slate-500">Left is the original; right is the modified document.</p>
-                  </div>
-                  <ToolbarButton onClick={() => setCompareMode("text")}>Edit inputs</ToolbarButton>
-                </div>
-                <DiffEditor
-                  height="38rem"
-                  language="json"
-                  theme="vs-dark"
-                  original={leftText}
-                  modified={rightText}
-                  options={{ readOnly: true, renderSideBySide: true, minimap: { enabled: false }, fontSize: 13, automaticLayout: true, scrollBeyondLastLine: false }}
-                />
+            {compareMode === "text" && !useLightweightCompareEditor && (
+              <div className="min-w-0 overflow-hidden rounded-lg border border-slate-800 xl:col-span-2">
+                <EditableDiff left={leftText} right={rightText}
+                  onLeftChange={updateLeftTextFromEditor}
+                  onRightChange={(value) => { setRightDocumentId(""); setRightText(value); }} />
               </div>
             )}
-            {compareMode !== "diff" && (
+            {compareMode === "text" && (
+              <div className="flex flex-wrap items-start justify-between gap-2 text-xs text-slate-500 xl:col-span-2">
+                <span>{useLightweightCompareEditor ? "Large file mode · Text highlighting paused. Use Compare values to inspect changes." : "Edit either side · Text changes highlight automatically. Compare values for structural changes."}</span>
+                {leftParsed.error && <ErrorMessage error={{ ...leftParsed.error, message: `Left: ${leftParsed.error.message}` }} />}
+                {rightParsed.error && <ErrorMessage error={{ ...rightParsed.error, message: `Right: ${rightParsed.error.message}` }} />}
+              </div>
+            )}
+            {(compareMode === "tree" || useLightweightCompareEditor) && (
             <>
             <div className="overflow-hidden rounded-lg border border-slate-800 bg-[#101419]">
-              <div className="flex items-center justify-between border-b border-slate-800 p-3">
-                <div className="flex min-w-0 items-center gap-2">
-                  <h2 className="text-sm font-semibold text-white">Left JSON</h2>
-                  {useLightweightCompareEditor && <span className="truncate text-xs text-amber-300">Large input mode</span>}
-                </div>
-                <div className="flex items-center gap-2">
-                  <ToolbarButton onClick={clearLeftComparison} disabled={!leftText} title="Clear left JSON">
-                    <Eraser className="h-4 w-4" />
-                  </ToolbarButton>
-                  <ToolbarButton onClick={() => leftFileRef.current?.click()} title="Open left JSON">
-                    <Upload className="h-4 w-4" />
-                  </ToolbarButton>
-                </div>
-              </div>
               <div className="h-[34rem]">
                 {compareMode === "text" ? (
-                  useLightweightCompareEditor ? (
                     <textarea
                       value={leftText}
                       onChange={(event) => updateLeftTextFromEditor(event.target.value)}
@@ -2169,16 +1556,6 @@ const JSONCompare = () => {
                       aria-label="Left JSON"
                       className="h-full w-full resize-none bg-[#0b0d10] p-3 font-mono text-xs leading-5 text-slate-200 outline-none focus:ring-1 focus:ring-inset focus:ring-cyan-500"
                     />
-                  ) : (
-                    <Editor
-                      height="100%"
-                      language="json"
-                      theme="vs-dark"
-                      value={leftText}
-                      onChange={(value) => updateLeftTextFromEditor(value || "")}
-                      options={{ minimap: { enabled: false }, fontSize: 13, tabSize: 2, wordWrap: "on", automaticLayout: true, scrollBeyondLastLine: false }}
-                    />
-                  )
                 ) : leftParsed.error ? <div className="p-3"><ErrorMessage error={leftParsed.error} /></div> : (
                   <TreeView
                     value={leftParsed.value}
@@ -2192,23 +1569,8 @@ const JSONCompare = () => {
               </div>
             </div>
             <div className="overflow-hidden rounded-lg border border-slate-800 bg-[#101419]">
-              <div className="flex items-center justify-between border-b border-slate-800 p-3">
-                <div className="flex min-w-0 items-center gap-2">
-                  <h2 className="text-sm font-semibold text-white">Right JSON</h2>
-                  {useLightweightCompareEditor && <span className="truncate text-xs text-amber-300">Large input mode</span>}
-                </div>
-                <div className="flex items-center gap-2">
-                  <ToolbarButton onClick={clearRightComparison} disabled={!rightText} title="Clear right JSON">
-                    <Eraser className="h-4 w-4" />
-                  </ToolbarButton>
-                  <ToolbarButton onClick={() => rightFileRef.current?.click()} title="Open a temporary right-side file">
-                    <Upload className="h-4 w-4" />
-                  </ToolbarButton>
-                </div>
-              </div>
               <div className="h-[34rem]">
                 {compareMode === "text" ? (
-                  useLightweightCompareEditor ? (
                     <textarea
                       value={rightText}
                       onChange={(event) => {
@@ -2219,19 +1581,6 @@ const JSONCompare = () => {
                       aria-label="Right JSON"
                       className="h-full w-full resize-none bg-[#0b0d10] p-3 font-mono text-xs leading-5 text-slate-200 outline-none focus:ring-1 focus:ring-inset focus:ring-cyan-500"
                     />
-                  ) : (
-                    <Editor
-                      height="100%"
-                      language="json"
-                      theme="vs-dark"
-                      value={rightText}
-                      onChange={(value) => {
-                        setRightDocumentId("");
-                        setRightText(value || "");
-                      }}
-                      options={{ minimap: { enabled: false }, fontSize: 13, tabSize: 2, wordWrap: "on", automaticLayout: true, scrollBeyondLastLine: false }}
-                    />
-                  )
                 ) : rightParsed.error ? <div className="p-3"><ErrorMessage error={rightParsed.error} /></div> : (
                   <TreeView
                     value={rightParsed.value}
@@ -2246,8 +1595,18 @@ const JSONCompare = () => {
             </div>
             </>
             )}
-            <div className="xl:col-span-2 border border-slate-800 bg-[#101419] p-3">
-              {!comparison.length ? <div className="p-6 text-center text-sm text-slate-500">No differences yet, or the documents match.</div> : (
+            <div className="min-w-0 rounded-lg border border-slate-800 bg-[#101419] p-3 xl:col-span-2">
+              {comparison.length > 0 && (
+                <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-slate-800 pb-3">
+                  <h2 className="mr-auto text-sm font-medium text-white">Structural changes <span className="text-slate-500">({comparison.length})</span></h2>
+                  <select aria-label="Filter differences" value={filterType} onChange={(event) => setFilterType(event.target.value)} className="rounded-md border border-slate-700 bg-[#0b0d10] px-2 py-2 text-xs text-slate-300">
+                    <option value="all">All changes</option><option value="added">Added</option><option value="removed">Removed</option><option value="modified">Modified</option>
+                  </select>
+                  <ToolbarButton onClick={() => moveDiff(-1)} disabled={!filteredComparison.length}>Previous</ToolbarButton>
+                  <ToolbarButton onClick={() => moveDiff(1)} disabled={!filteredComparison.length}>Next</ToolbarButton>
+                </div>
+              )}
+              {!comparison.length ? <div className="p-6 text-center text-sm text-slate-500">{compareStatus.progress === 100 ? "The documents match. No structural differences found." : compareStatus.busy ? "Comparing documents…" : "Ready when you are. Add two JSON documents, then compare their values."}</div> : (
                 <div className="grid gap-3 xl:grid-cols-[320px_minmax(0,1fr)]">
                   <div className="border border-slate-800 bg-[#0c0f13] p-3 text-xs">
                     <div className="mb-2 text-slate-500">Difference</div>
@@ -2284,11 +1643,22 @@ const JSONCompare = () => {
         )}
       </main>
 
+      <CopyToast notification={copyNotification} onDismiss={dismissCopyNotification} />
+
       {contextMenu && (
-        <div className="fixed z-[60] w-56 border border-slate-700 bg-[#101419] p-1 text-xs shadow-2xl shadow-black/40" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => event.stopPropagation()}>
+        <div className="fixed z-[60] w-56 border border-slate-700 bg-[#101419] p-1 text-xs shadow-2xl shadow-black/40" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => {
+          event.stopPropagation();
+          setContextMenu(null);
+        }}>
           <button onClick={() => addNode(contextMenu.path)} className="block w-full px-3 py-2 text-left text-slate-200 hover:bg-slate-800">Add child</button>
           <button onClick={() => editNode(contextMenu.path)} className="block w-full px-3 py-2 text-left text-slate-200 hover:bg-slate-800">Edit node</button>
           <button onClick={() => { commitValue(duplicateAtPath(leftParsed.value, contextMenu.path)); setContextMenu(null); }} className="block w-full px-3 py-2 text-left text-slate-200 hover:bg-slate-800">Duplicate node</button>
+          <button
+            onClick={() => copyText(keyOfPath(contextMenu.path), "key")}
+            disabled={!contextMenu.path}
+            title={!contextMenu.path ? "The root document has no key" : "Copy this key or array index"}
+            className="block w-full px-3 py-2 text-left text-slate-200 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+          >{copied === "key" ? "Copied key" : "Copy key"}</button>
           <button onClick={() => copyText(contextMenu.path || "root", "path")} className="block w-full px-3 py-2 text-left text-slate-200 hover:bg-slate-800">{copied === "path" ? "Copied path" : "Copy path"}</button>
           <button onClick={() => copyText(stringify(getValueAtPath(leftParsed.value, contextMenu.path), 2), "value")} className="block w-full px-3 py-2 text-left text-slate-200 hover:bg-slate-800">{copied === "value" ? "Copied value" : "Copy value"}</button>
           <button onClick={() => clearSelectedValues(selectedPaths.size ? selectedPaths : new Set([contextMenu.path]))} className="block w-full px-3 py-2 text-left text-yellow-100 hover:bg-yellow-950/40">Clear selected values</button>
