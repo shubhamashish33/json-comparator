@@ -1,18 +1,19 @@
 import React from "react";
-import { useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
+import { WorkflowDemo } from "./components/WorkflowDemo";
 import { ArrowRight, Braces, Github, GitCompare, HelpCircle, Lock, TerminalSquare } from "lucide-react";
 
 const HomePage = () => {
-  const navigate = useNavigate();
+
 
   return (
     <div className="min-h-screen bg-[#0b0d10] font-sans text-slate-200 selection:bg-cyan-500/20">
       <header className="border-b border-slate-800 bg-[#0b0d10]/95">
         <div className="mx-auto flex h-20 max-w-7xl items-center justify-between px-4 sm:px-6">
-          <button onClick={() => navigate("/compare")} className="flex items-center gap-2 text-left">
+          <Link to="/compare" className="flex items-center gap-2 text-left">
             <TerminalSquare className="h-5 w-5 text-cyan-400" />
             <span className="text-sm font-semibold uppercase text-slate-100">JSONEditor</span>
-          </button>
+          </Link>
           <div className="flex gap-2">
             <a
               href="https://github.com/shubhamashish33/json-comparator"
@@ -24,20 +25,20 @@ const HomePage = () => {
               <Github className="h-4 w-4" />
               <span className="hidden sm:inline">GitHub</span>
             </a>
-            <button
-              onClick={() => navigate("/help")}
+            <Link
+              to="/help"
               className="inline-flex items-center gap-2 rounded border border-slate-700 px-3 py-2 text-sm text-slate-200 hover:bg-slate-900"
             >
               <HelpCircle className="h-4 w-4" />
               Help
-            </button>
-            <button
-              onClick={() => navigate("/compare")}
+            </Link>
+            <Link
+              to="/compare"
               className="inline-flex items-center gap-2 rounded border border-cyan-500/40 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-100 hover:bg-cyan-500/15"
             >
               Open workspace
               <ArrowRight className="h-4 w-4" />
-            </button>
+            </Link>
           </div>
         </div>
       </header>
@@ -49,26 +50,26 @@ const HomePage = () => {
             local-first JSON tooling
           </div>
           <h1 className="max-w-3xl text-5xl font-semibold leading-tight tracking-tight text-white md:text-6xl">
-            Make sense of every JSON change.
+            Compare API responses. Share sanitized JSON.
           </h1>
           <p className="mt-5 max-w-2xl text-base leading-7 text-slate-400">
-            Format messy payloads, explore nested data, and pinpoint changes side by side. A focused workspace for the JSON you work with every day.
+            Match records by ID, ignore noisy fields, and spot the changes that matter. Remove credentials before sharing examples—all with document processing in your browser.
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
-            <button
-              onClick={() => navigate("/compare")}
+            <Link
+              to="/compare"
               className="inline-flex items-center gap-2 rounded border border-cyan-500/50 bg-cyan-500 px-4 py-2.5 text-sm font-semibold text-slate-950 hover:bg-cyan-400"
             >
               <Braces className="h-4 w-4" />
               Start editing
-            </button>
-            <button
-              onClick={() => navigate("/compare?tab=compare")}
+            </Link>
+            <Link
+              to="/compare?tab=compare"
               className="inline-flex items-center gap-2 rounded border border-slate-700 px-4 py-2.5 text-sm text-slate-200 hover:bg-slate-900"
             >
               <GitCompare className="h-4 w-4" />
               Compare JSON
-            </button>
+            </Link>
           </div>
         <div className="mt-10 grid grid-cols-3 gap-4 border-t border-slate-800 pt-6 text-xs leading-5 text-slate-400">
             <div><span className="block font-semibold text-slate-200">Explore</span>Code, tree & table views</div>
@@ -77,23 +78,7 @@ const HomePage = () => {
           </div>
         </section>
 
-        <section className="overflow-hidden rounded-2xl border border-slate-700/70 bg-[#111923] p-6 shadow-2xl shadow-cyan-950/30">
-          <div className="mb-3 flex items-center justify-between border-b border-slate-800 pb-3 text-xs text-slate-500">
-            <span>workspace.json</span>
-            <span>editor</span>
-          </div>
-          <pre className="overflow-auto text-sm leading-7 text-cyan-100">
-            <code>{`{
-  "mode": "editor",
-  "actions": ["format", "repair", "setKey", "removeKey"],
-  "compare": {
-    "enabled": "when needed",
-    "views": ["tree", "list", "patch"]
-  },
-  "privacy": "browser-local"
-}`}</code>
-          </pre>
-        </section>
+        <WorkflowDemo />
       </main>
     </div>
   );
