@@ -40,3 +40,6 @@ nav { backdrop-filter: blur(16px); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
 }
+
+/* A quieter focus indicator inside the command palette. */
+.palette-search-input:focus-visible { outline: 1px solid rgba(148, 163, 184, 0.3); outline-offset: 2px; }
