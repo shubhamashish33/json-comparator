@@ -39,6 +39,10 @@
       }
     },
     {
+      "src": "/(json-compare|compare-json-arrays-by-id|json-redactor|json-formatter|help|compare)/?$",
+      "dest": "/$1/index.html"
+    },
+    {
       "handle": "filesystem"
     },
     {

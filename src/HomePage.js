@@ -1,5 +1,6 @@
 import React from "react";
 import { Link } from "react-router-dom";
+import { toolPages } from "./pageMetadata";
 import { WorkflowDemo } from "./components/WorkflowDemo";
 import { ArrowRight, Braces, Github, GitCompare, HelpCircle, Lock, TerminalSquare } from "lucide-react";
 
@@ -80,6 +81,7 @@ const HomePage = () => {
 
         <WorkflowDemo />
       </main>
+      <nav aria-label="JSON tool guides" className="mx-auto flex max-w-7xl flex-wrap gap-5 border-t border-slate-800 px-4 py-6 text-xs text-cyan-300">{toolPages.map(page => <Link key={page.path} to={page.path}>{page.title.split(" — ")[0]}</Link>)}</nav>
     </div>
   );
 };

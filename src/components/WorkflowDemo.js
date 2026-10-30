@@ -6,8 +6,8 @@ const before = { orders: [{ id: "A", status: "pending" }, { id: "B", status: "pa
 const after = { orders: [{ id: "B", status: "paid" }, { id: "A", status: "shipped" }], updatedAt: "10:05" };
 const sensitive = { service: "orders", apiKey: "example-key-not-a-real-secret", user: { name: "Ada", password: "example-password" } };
 
-export function WorkflowDemo() {
-  const [mode, setMode] = useState("compare");
+export function WorkflowDemo({ initialMode = "compare" }) {
+  const [mode, setMode] = useState(initialMode);
   const [ignoreTimestamp, setIgnoreTimestamp] = useState(true);
   const differences = useMemo(() => compareJSONValues(before, after, { ...defaultSettings, arrayMode: "match-key", arrayMatchKey: "id", ignorePaths: ignoreTimestamp ? "updatedAt" : "" }), [ignoreTimestamp]);
   const redacted = useMemo(() => redactSecrets(sensitive), []);

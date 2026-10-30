@@ -78,7 +78,7 @@ const JSONCompare = () => {
   const activeTasksRef = useRef(new Map());
   const directEditActiveRef = useRef(false);
   const directEditTimerRef = useRef(null);
-  const [workspaceTab, setWorkspaceTab] = useState(() => searchParams.get("tab") === "compare" ? "compare" : "editor");
+  const [workspaceTab, setWorkspaceTab] = useState(() => ["compare", "query", "redact"].includes(searchParams.get("tab")) ? searchParams.get("tab") : "editor");
   const [editorMode, setEditorMode] = useState("code");
   const [compareMode, setCompareMode] = useState("text");
   const [documents, setDocuments] = useState([{ id: "document-1", name: "Document 1.json", text: "" }]);
