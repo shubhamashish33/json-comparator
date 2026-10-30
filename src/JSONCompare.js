@@ -1,3 +1,4 @@
+import { shouldRememberWorkspace, setRememberWorkspace, clearSavedWorkspace } from "./workspacePrivacy";
 import { usePaletteShortcut } from "./hooks/usePaletteShortcut";
 import { CommandPalette } from "./components/CommandPalette";
 import { useClipboard } from "./hooks/useClipboard";
@@ -137,6 +138,7 @@ const JSONCompare = () => {
   const [cursorPosition, setCursorPosition] = useState({ lineNumber: 1, column: 1 });
   const [dropActive, setDropActive] = useState(false);
   const [storageReady, setStorageReady] = useState(false);
+  const [rememberWorkspace, setRemember] = useState(shouldRememberWorkspace);
 
   const ajv = useMemo(() => new Ajv({ allErrors: true, strict: false }), []);
 
@@ -274,6 +276,7 @@ const JSONCompare = () => {
 
   useEffect(() => {
     try {
+      if (!shouldRememberWorkspace()) return;
       const storedDocuments = JSON.parse(localStorage.getItem(STORAGE_KEYS.documents) || "null");
       const storedActiveId = localStorage.getItem(STORAGE_KEYS.activeDocument);
       if (Array.isArray(storedDocuments) && storedDocuments.length) {
@@ -358,11 +361,13 @@ const JSONCompare = () => {
 
   useEffect(() => {
     if (!storageReady) return;
+    if (!rememberWorkspace) return;
     const leftStored = safeSetStorage(STORAGE_KEYS.left, leftText);
     const rightStored = safeSetStorage(STORAGE_KEYS.right, rightText);
     safeSetStorageJSON(STORAGE_KEYS.settings, settings);
     const documentsSize = documents.reduce((total, document) => total + document.text.length, 0);
     if (documentsSize <= STORAGE_TEXT_LIMIT) safeSetStorageJSON(STORAGE_KEYS.documents, documents);
+    else { try { localStorage.removeItem(STORAGE_KEYS.documents); } catch { /* Storage unavailable. */ } }
     safeSetStorage(STORAGE_KEYS.activeDocument, activeDocumentId);
     safeSetStorage(STORAGE_KEYS.schema, schemaText);
     safeSetStorage(STORAGE_KEYS.schemaEnabled, String(schemaEnabled));
@@ -371,7 +376,7 @@ const JSONCompare = () => {
     } else {
       setStorageNotice("");
     }
-  }, [activeDocumentId, documents, leftText, rightText, schemaEnabled, schemaText, settings, storageReady]);
+  }, [activeDocumentId, documents, leftText, rightText, schemaEnabled, schemaText, settings, storageReady, rememberWorkspace]);
 
   useEffect(() => {
     if (!schemaEnabled || !schemaText.trim() || leftParsed.error || leftParsed.value === null) {
@@ -1044,6 +1049,15 @@ const JSONCompare = () => {
           </div>
           <span className="hidden sm:inline-flex items-center gap-2 rounded-full border border-emerald-800/50 bg-emerald-950/20 px-3 py-1.5 text-xs text-emerald-300"><ShieldCheck className="h-3.5 w-3.5" />Browser-local processing</span>
         </div>
+        <details className="mb-4 rounded-lg border border-slate-800 bg-[#101419] text-xs text-slate-400">
+          <summary className="cursor-pointer px-3 py-2">Privacy & storage · {rememberWorkspace ? "Workspace saved in this browser" : "Documents kept in memory only"}</summary>
+          <div className="space-y-3 border-t border-slate-800 p-3">
+            <label className="flex items-center gap-2 text-slate-200"><input type="checkbox" checked={rememberWorkspace} onChange={event => { const remember = event.target.checked; setRememberWorkspace(remember); setRemember(remember); setStorageNotice(remember ? "" : "Saved workspace cleared. Download documents before closing this tab."); }} />Remember workspace after refresh</label>
+            <p>Turning this off removes this app's saved documents, schema, and settings from browser storage. Open documents remain available until you close or refresh this tab.</p>
+            <p>Document processing happens in your browser. Site analytics and editor assets may use network requests. Loading a URL contacts that URL. Secret detection may miss sensitive values; review the output before sharing.</p>
+            <button type="button" onClick={() => { clearSavedWorkspace(); setRememberWorkspace(false); setRemember(false); setStorageNotice("Saved workspace cleared. Open documents are kept in memory only."); }} className="rounded border border-slate-700 px-3 py-2 text-slate-200 focus:ring-2 focus:ring-cyan-500">Clear saved workspace & stop saving</button>
+          </div>
+        </details>
         {workspaceTab !== "compare" && (
         <div className="mb-2 flex min-w-0 items-center gap-1 overflow-x-auto border-b border-slate-800">
           {documents.map((document) => (

@@ -47,3 +47,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the code layout, tests, and contribut
 ## License
 
 [MIT](LICENSE)
+
+## Browser storage and privacy
+
+Open **Privacy & storage** in the workspace to turn off **Remember workspace after refresh**. This clears the app's saved documents, schema, and settings and keeps the current workspace in memory only. Download anything you need before refreshing or closing the tab. The storage preference itself is remembered when browser storage is available.
+
+Document processing is local. Site analytics and editor asset loading may make network requests; importing from a URL contacts that URL. Secret detection is a review aid and may miss sensitive values.
