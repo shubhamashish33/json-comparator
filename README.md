@@ -59,3 +59,7 @@ Tree keyboard controls: Up/Down move between visible nodes, Right expands or ent
 Comparison presets: use Strict, Match records by ID, or API responses in Compare. Expand Customize rules to edit array matching, path filters, case rules, and numeric tolerance, then save a named preset. Up to 20 presets are stored locally when workspace saving is enabled; memory-only mode keeps them only for the open workspace session.
 
 Public tool pages are available at `/json-compare`, `/compare-json-arrays-by-id`, `/json-redactor`, and `/json-formatter`. `npm run build` prerenders the homepage, help, and tool pages and writes unique metadata for all routes. Vercel serves these HTML files directly; the editing workspace remains client-rendered. The public formatter keeps its input in memory.
+
+## Performance
+
+Run `npm run benchmark` for reproducible worker benchmarks. See [measurements and guardrails](docs/PERFORMANCE.md) for the recorded run, bounded views/storage/history, and what the measurements do and do not cover.
