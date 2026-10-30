@@ -108,10 +108,43 @@ export const redactSecrets = (source, options = {}) => {
   };
 };
 
+// Inspect original tokens before parsed values can hide duplicate keys or round IDs.
+const findDataFidelityIssue = (text) => {
+  const tokens = /"(?:[^"\\]|\\[\s\S])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|[{}[\]]/g;
+  const containers = [];
+  let match;
+  while ((match = tokens.exec(text))) {
+    const token = match[0];
+    if (token === "{") containers.push(new Set());
+    else if (token === "[") containers.push(null);
+    else if (token === "}" || token === "]") containers.pop();
+    else if (token[0] === '"') {
+      if (/^\s*:/.test(text.slice(tokens.lastIndex))) {
+        const keys = containers[containers.length - 1];
+        const key = JSON.parse(token);
+        if (keys?.has(key)) return { position: match.index, message: "Duplicate object key " + token + ". Rename or remove it before processing; the source text has been kept." };
+        keys?.add(key);
+      }
+    } else {
+      const number = Number(token);
+      if (!Number.isFinite(number) || (Number.isInteger(number) && !Number.isSafeInteger(number))) {
+        return { position: match.index, message: "Number " + token + " exceeds safe numeric precision. Quote large IDs as strings before processing; the source text has been kept." };
+      }
+    }
+  }
+  return null;
+};
+
 export const parseJSONDetailed = (text) => {
   if (!text.trim()) return { value: null, error: null };
   try {
-    return { value: JSON.parse(text), error: null };
+    const value = JSON.parse(text);
+    const issue = findDataFidelityIssue(text);
+    if (issue) {
+      const lines = text.slice(0, issue.position).split(/\r\n|\r|\n/);
+      return { value: null, error: { ...issue, line: lines.length, column: lines[lines.length - 1].length + 1, kind: "data-fidelity" } };
+    }
+    return { value, error: null };
   } catch (error) {
     const positionMatch = /position (\d+)/i.exec(error.message);
     const position = positionMatch ? Number(positionMatch[1]) : -1;
