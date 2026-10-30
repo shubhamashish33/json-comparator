@@ -1,3 +1,5 @@
+import { usePaletteShortcut } from "./hooks/usePaletteShortcut";
+import { CommandPalette } from "./components/CommandPalette";
 import { useClipboard } from "./hooks/useClipboard";
 import { CopyToast } from "./components/CopyToast";
 import { useComparisonView } from "./hooks/useComparisonView";
@@ -58,6 +60,10 @@ import {
 } from "./workbenchUtils";
 
 const JSONCompare = () => {
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const closePalette = useCallback(() => setPaletteOpen(false), []);
+  const openPalette = useCallback(() => setPaletteOpen(true), []);
+  usePaletteShortcut(openPalette);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const leftFileRef = useRef(null);
@@ -867,17 +873,13 @@ const JSONCompare = () => {
 
   useEffect(() => {
     const handleShortcut = (event) => {
+      if (event.defaultPrevented || document.querySelector('[aria-modal="true"]')) return;
       if (!(event.ctrlKey || event.metaKey)) return;
       const key = event.key.toLowerCase();
       if (key === "n") {
         event.preventDefault();
         addDocument();
-      } else if (key === "k") {
-        event.preventDefault();
-        setWorkspaceTab("editor");
-        setEditorMode("tree");
-        setSearchExpanded(true);
-        window.setTimeout(() => searchInputRef.current?.focus(), 0);
+
       } else if (event.shiftKey && key === "f" && !leftParsed.error && leftParsed.value !== null) {
         event.preventDefault();
         commitText(stringify(leftParsed.value, 2));
@@ -953,9 +955,37 @@ const JSONCompare = () => {
     ["table", "Table", Table2],
   ];
 
+  const validJSON = !leftParsed.error && leftParsed.value !== null && leftParsed.sourceText === leftText;
+  const command = (id, label, run, disabled = false, shortcut = "", description = "") => ({ id, label, run, disabled, shortcut, description, group: "Commands" });
+  const paletteItems = [
+    command("new", "New document", addDocument, false, "Ctrl/Cmd+N"),
+    command("open", "Open JSON file", () => leftFileRef.current?.click()),
+    command("format", "Format JSON", () => commitText(stringify(leftParsed.value, 2)), !validJSON, "Ctrl/Cmd+Shift+F"),
+    command("minify", "Minify JSON", () => commitText(stringify(leftParsed.value, 0)), !validJSON, "Ctrl/Cmd+Shift+M"),
+    command("sort", "Sort object keys", () => commitValue(sortKeysDeep(leftParsed.value)), !validJSON),
+    command("repair", "Repair JSON", () => commitText(repairJSONish(leftText)), !leftText),
+    command("copy", "Copy document", () => copyText(leftText, "left"), !leftText),
+    command("download", "Download JSON", () => downloadText(activeDocument?.name || "data.json", leftText || "null")),
+    command("undo", "Undo document change", undo, !history.length),
+    command("redo", "Redo document change", redo, !future.length),
+    ...modeButtons.map(([mode, label]) => command("view-" + mode, "Show " + label + " view", () => { setWorkspaceTab("editor"); setEditorMode(mode); })),
+    ...[["compare", "Compare documents"], ["query", "Query and transform JSON"], ["redact", "Sanitize secrets"]].map(([tab, label]) => command(tab, label, () => setWorkspaceTab(tab))),
+    command("compare-run", "Run structural comparison", () => { setWorkspaceTab("compare"); runCompare(); }, !isCompareReady || compareStatus.busy),
+    command("diff-next", "Next difference", () => { setWorkspaceTab("compare"); moveDiff(1); }, !filteredComparison.length),
+    command("diff-prev", "Previous difference", () => { setWorkspaceTab("compare"); moveDiff(-1); }, !filteredComparison.length),
+    command("schema", "Open JSON Schema", () => { setWorkspaceTab("editor"); setSchemaPanelOpen(true); }),
+    command("find", "Find and replace in JSON", () => { setWorkspaceTab("editor"); setEditorMode("tree"); setSearchExpanded(true); window.setTimeout(() => searchInputRef.current?.focus(), 0); }),
+    command("sample", "Load sample documents", () => { commitText(stringify(sampleLeft, 2)); setRightDocumentId(""); setRightText(stringify(sampleRight, 2)); }, false, "", "Replaces current content; Undo restores the active document"),
+    command("cancel", "Cancel background work", cancelWorkerWork, !workerStatus.busy),
+    command("help", "Help and keyboard shortcuts", () => navigate("/help")),
+    ...documents.map(doc => ({ id: "doc-" + doc.id, group: "Documents", label: doc.name, description: doc.id === activeDocumentId ? "Active document" : "Switch to this document", run: () => { switchDocument(doc.id); setWorkspaceTab("editor"); } })),
+    ...(validJSON ? flattened.map((row, index) => ({ id: "json-" + index, group: "JSON", label: row.path, description: String(row.value).slice(0, 180), run: () => { setWorkspaceTab("editor"); setEditorMode("tree"); selectPath(row.path === "root" ? "" : row.path); } })) : []),
+  ];
+
   return (
     <div className="min-h-screen bg-[#0b0d10] font-sans text-slate-200 selection:bg-cyan-500/20">
       <Analytics />
+      {paletteOpen && <CommandPalette items={paletteItems} onClose={closePalette} jsonNotice={!validJSON ? "Load valid JSON to search data" : leftParsed.index?.truncated ? "JSON index limited; some paths may be omitted" : "JSON results from active document"} />}
       <nav className="sticky top-0 z-50 border-b border-slate-800 bg-[#0b0d10]/95">
         <div className="mx-auto flex min-h-14 max-w-[120rem] items-center gap-4 px-4">
           <button onClick={() => navigate("/")} className="inline-flex items-center gap-2 text-sm font-semibold uppercase text-white">
@@ -982,6 +1012,7 @@ const JSONCompare = () => {
             ))}
           </div>
           <div className="flex shrink-0 gap-1">
+            <button onClick={() => setPaletteOpen(true)} title="Search everything (Ctrl/Cmd+K)" className="inline-flex items-center gap-2 rounded-md border border-slate-700 px-3 py-2 text-xs text-slate-300 hover:border-cyan-500 focus:ring-2 focus:ring-cyan-500"><Search className="h-4 w-4" /><span className="hidden sm:inline">Search everything</span><kbd className="hidden text-slate-500 md:inline">Ctrl K</kbd></button>
             <a
               href="https://github.com/shubhamashish33/json-comparator"
               target="_blank"

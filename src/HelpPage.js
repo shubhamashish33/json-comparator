@@ -133,7 +133,7 @@ return value;`}</CodeBlock>
           <HelpSection icon={Keyboard} title="Keyboard Shortcuts">
             <ul className="list-disc space-y-2 pl-5">
               <li>Ctrl/Cmd+N — new document</li>
-              <li>Ctrl/Cmd+K — open JSON search</li>
+              <li>Ctrl/Cmd+K — open Search everything (commands, documents, and JSON)</li>
               <li>Ctrl/Cmd+Shift+F — format the active document</li>
               <li>Ctrl/Cmd+Shift+M — minify the active document</li>
             </ul>
