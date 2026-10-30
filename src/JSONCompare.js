@@ -1,3 +1,4 @@
+import { ActionMenu, KeyboardMenu } from "./components/KeyboardMenu";
 import { shouldRememberWorkspace, setRememberWorkspace, clearSavedWorkspace } from "./workspacePrivacy";
 import { usePaletteShortcut } from "./hooks/usePaletteShortcut";
 import { CommandPalette } from "./components/CommandPalette";
@@ -405,10 +406,11 @@ const JSONCompare = () => {
   useEffect(() => {
     const close = () => setContextMenu(null);
     window.addEventListener("click", close);
-    window.addEventListener("keydown", close);
+    const escape = event => { if (event.key === "Escape") close(); };
+    window.addEventListener("keydown", escape);
     return () => {
       window.removeEventListener("click", close);
-      window.removeEventListener("keydown", close);
+      window.removeEventListener("keydown", escape);
     };
   }, []);
 
@@ -1122,11 +1124,7 @@ const JSONCompare = () => {
               </ToolbarButton>
             )}
             <div className="relative ml-auto">
-              <details>
-                <summary className="flex min-h-9 cursor-pointer list-none items-center gap-2 rounded-md border border-slate-700 bg-[#101419] px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-900">
-                  <MoreHorizontal className="h-4 w-4" />More
-                </summary>
-                <div className="absolute right-0 top-11 z-50 grid w-52 gap-1 rounded-lg border border-slate-700 bg-[#101419] p-1.5 shadow-2xl shadow-black/50">
+              <ActionMenu label={<><MoreHorizontal className="h-4 w-4" />More</>}>
                   <button onClick={() => { commitText(stringify(sampleLeft, 2)); setRightDocumentId(""); setRightText(stringify(sampleRight, 2)); }} className="rounded px-3 py-2 text-left text-xs hover:bg-slate-800">Load sample</button>
                   <button onClick={() => downloadText(activeDocument?.name || "data.json", leftText || "null")} className="rounded px-3 py-2 text-left text-xs hover:bg-slate-800">Download JSON</button>
                   <button onClick={() => leftParsed.value !== null && commitValue(sortKeysDeep(leftParsed.value))} disabled={leftParsed.error} className="rounded px-3 py-2 text-left text-xs hover:bg-slate-800 disabled:opacity-40">Sort keys</button>
@@ -1134,8 +1132,7 @@ const JSONCompare = () => {
                   <button onClick={() => setSchemaPanelOpen((current) => !current)} className="rounded px-3 py-2 text-left text-xs hover:bg-slate-800">JSON Schema</button>
                   <div className="my-1 border-t border-slate-800" />
                   <button onClick={resetWorkspace} className="rounded px-3 py-2 text-left text-xs text-red-200 hover:bg-red-950/40">Reset workspace</button>
-                </div>
-              </details>
+              </ActionMenu>
             </div>
             {workerStatus.busy && <ToolbarButton onClick={cancelWorkerWork}><X className="h-4 w-4" />Cancel work</ToolbarButton>}
           </div>
@@ -1555,13 +1552,10 @@ const JSONCompare = () => {
                 <ToolbarButton onClick={runCompare} active disabled={compareStatus.busy}>
                   <GitCompare className="h-4 w-4" />{compareStatus.busy ? "Comparing…" : "Compare values"}
                 </ToolbarButton>
-                <details className="relative">
-                  <summary className="flex min-h-9 cursor-pointer list-none items-center gap-2 rounded-md border border-slate-700 px-3 py-2 text-xs text-slate-300"><Download className="h-4 w-4" />Export</summary>
-                  <div className="absolute right-0 top-11 z-40 grid w-48 gap-1 rounded-lg border border-slate-700 bg-[#101419] p-1.5 shadow-xl">
+                <ActionMenu label={<><Download className="h-4 w-4" />Export</>}>
                     <button onClick={() => downloadText("json-patch.json", stringify(patch, 2))} disabled={compareStatus.progress !== 100 || compareStatus.busy} className="rounded px-3 py-2 text-left text-xs hover:bg-slate-800 disabled:opacity-40">Download JSON Patch</button>
                     <button onClick={() => leftParsed.value !== null && downloadText("merged-output.json", stringify(applyDiffToLeft(leftParsed.value, comparison), 2))} disabled={compareStatus.progress !== 100 || compareStatus.busy || leftParsed.value === null || Boolean(leftParsed.error)} className="rounded px-3 py-2 text-left text-xs hover:bg-slate-800 disabled:opacity-40">Download merged JSON</button>
-                  </div>
-                </details>
+                </ActionMenu>
               </div>
             </div>
             <div className="grid items-end gap-2 rounded-lg border border-slate-800 bg-[#101419] p-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] xl:col-span-2">
@@ -1691,10 +1685,7 @@ const JSONCompare = () => {
       <CopyToast notification={copyNotification} onDismiss={dismissCopyNotification} />
 
       {contextMenu && (
-        <div className="fixed z-[60] w-56 border border-slate-700 bg-[#101419] p-1 text-xs shadow-2xl shadow-black/40" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => {
-          event.stopPropagation();
-          setContextMenu(null);
-        }}>
+        <KeyboardMenu onClose={() => setContextMenu(null)} className="fixed z-[60] w-56 border border-slate-700 bg-[#101419] p-1 text-xs shadow-2xl shadow-black/40" style={{ left: contextMenu.x, top: contextMenu.y }}>
           <button onClick={() => addNode(contextMenu.path)} className="block w-full px-3 py-2 text-left text-slate-200 hover:bg-slate-800">Add child</button>
           <button onClick={() => editNode(contextMenu.path)} className="block w-full px-3 py-2 text-left text-slate-200 hover:bg-slate-800">Edit node</button>
           <button onClick={() => { commitValue(duplicateAtPath(leftParsed.value, contextMenu.path)); setContextMenu(null); }} className="block w-full px-3 py-2 text-left text-slate-200 hover:bg-slate-800">Duplicate node</button>
@@ -1708,7 +1699,7 @@ const JSONCompare = () => {
           <button onClick={() => copyText(stringify(getValueAtPath(leftParsed.value, contextMenu.path), 2), "value")} className="block w-full px-3 py-2 text-left text-slate-200 hover:bg-slate-800">{copied === "value" ? "Copied value" : "Copy value"}</button>
           <button onClick={() => clearSelectedValues(selectedPaths.size ? selectedPaths : new Set([contextMenu.path]))} className="block w-full px-3 py-2 text-left text-yellow-100 hover:bg-yellow-950/40">Clear selected values</button>
           <button onClick={() => removePaths(selectedPaths.size ? selectedPaths : new Set([contextMenu.path]))} className="block w-full px-3 py-2 text-left text-red-200 hover:bg-red-950/50">Remove selected</button>
-        </div>
+        </KeyboardMenu>
       )}
 
       <button

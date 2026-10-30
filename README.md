@@ -53,3 +53,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the code layout, tests, and contribut
 Open **Privacy & storage** in the workspace to turn off **Remember workspace after refresh**. This clears the app's saved documents, schema, and settings and keeps the current workspace in memory only. Download anything you need before refreshing or closing the tab. The storage preference itself is remembered when browser storage is available.
 
 Document processing is local. Site analytics and editor asset loading may make network requests; importing from a URL contacts that URL. Secret detection is a review aid and may miss sensitive values.
+
+Tree keyboard controls: Up/Down move between visible nodes, Right expands or enters a node, Left collapses or returns to its parent, and Home/End move to the first/last visible node. Enter/Space selects and toggles a container. Shift+F10 opens node actions. Action menus support arrows, Home/End, Escape, and return focus to their trigger. Paged children remain available through the Show next button.

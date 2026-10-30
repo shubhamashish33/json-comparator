@@ -13,6 +13,8 @@ const TreeNode = ({
   matches,
   onSelect,
   onContextMenu,
+  activePath,
+  onFocusPath,
 }) => {
   const [open, setOpen] = useState(level < 2);
   const [visibleCount, setVisibleCount] = useState(TREE_PAGE_SIZE);
@@ -38,26 +40,52 @@ const TreeNode = ({
   }, [isContainer, isSelectedAncestor]);
 
   return (
-    <div className="text-sm">
-      <div
+    <div
         data-path={path}
-        role="button"
-        tabIndex={0}
+        role="treeitem"
+        tabIndex={activePath === path ? 0 : -1}
+        aria-level={level + 1}
+        aria-selected={selected}
+        onFocus={event => { event.stopPropagation(); onFocusPath(path); }}
         aria-expanded={isContainer ? Boolean(open) : undefined}
         aria-label={`${path || "root"}: ${valueType(value)}`}
         onKeyDown={(event) => {
-          if (event.key !== "Enter" && event.key !== " ") return;
+          if (event.target !== event.currentTarget) return;
+          const row = event.currentTarget;
+          const rows = Array.from(row.closest('[role="tree"]').querySelectorAll('[role="treeitem"]'));
+          const index = rows.indexOf(row);
+          const focus = (target) => { target?.focus(); target?.scrollIntoView?.({ block: "nearest" }); };
+          if (event.key === "ArrowDown") focus(rows[Math.min(index + 1, rows.length - 1)]);
+          else if (event.key === "ArrowUp") focus(rows[Math.max(index - 1, 0)]);
+          else if (event.key === "Home") focus(rows[0]);
+          else if (event.key === "End") focus(rows[rows.length - 1]);
+          else if (event.key === "ArrowRight") {
+            if (isContainer && !open) setOpen(true);
+            else if (rows[index + 1]?.getAttribute("aria-level") > level + 1) focus(rows[index + 1]);
+          } else if (event.key === "ArrowLeft") {
+            if (isContainer && open) setOpen(false);
+            else focus(rows.slice(0, index).reverse().find(node => Number(node.getAttribute("aria-level")) === level));
+          } else if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+            const rect = row.firstElementChild.getBoundingClientRect();
+            onSelect(path);
+            onContextMenu(path, { preventDefault: () => event.preventDefault(), clientX: rect.left + 20, clientY: rect.bottom });
+          } else if (event.key === "Enter" || event.key === " ") {
+            onSelect(path, event);
+            if (isContainer) setOpen(current => !current);
+          } else return;
           event.preventDefault();
           event.stopPropagation();
-          onSelect(path, event);
-          if (isContainer) setOpen((current) => !current);
         }}
         onClick={(event) => {
           event.stopPropagation();
+          onFocusPath(path);
+          if (document.activeElement !== event.currentTarget) event.currentTarget.focus();
           onSelect(path, event);
           if (isContainer) setOpen((current) => !current);
         }}
-        onContextMenu={(event) => onContextMenu(path, event)}
+        onContextMenu={(event) => { event.stopPropagation(); onContextMenu(path, event); }}
+        className="text-sm">
+      <div
         className={`group flex min-h-8 cursor-default items-center gap-2 px-2 py-1 hover:bg-slate-800 ${
           selected ? "bg-cyan-500/15 ring-1 ring-cyan-500" : matched ? "bg-yellow-500/10" : ""
         }`}
@@ -69,7 +97,7 @@ const TreeNode = ({
         <span className={isContainer ? "text-cyan-300" : "break-all text-emerald-300"}>{preview}</span>
         <span className="ml-auto text-[10px] uppercase text-slate-600">{valueType(value)}</span>
       </div>
-      {isContainer && open && entries.map(([key, child]) => (
+      <div role="group">{isContainer && open && entries.map(([key, child]) => (
         <TreeNode
           key={`${path}.${key}`}
           nodeKey={key}
@@ -80,6 +108,8 @@ const TreeNode = ({
           selectedPaths={selectedPaths}
           matches={matches}
           onSelect={onSelect}
+          activePath={activePath}
+          onFocusPath={onFocusPath}
           onContextMenu={onContextMenu}
         />
       ))}
@@ -95,25 +125,30 @@ const TreeNode = ({
           Show next {Math.min(TREE_PAGE_SIZE, childCount - visibleCount)} of {childCount}
         </button>
       )}
+      </div>
     </div>
   );
 };
 
 export const TreeView = ({ value, selectedPath, selectedPaths, matches, onSelect, onContextMenu }) => {
   const treeRef = useRef(null);
+  const [activePath, setActivePath] = useState("");
+  useEffect(() => {
+    if (!Array.from(treeRef.current?.querySelectorAll("[data-path]") || []).some(node => node.dataset.path === activePath)) setActivePath("");
+  }, [value, activePath]);
   useEffect(() => {
     if (!selectedPath) return;
     const timer = window.setTimeout(() => {
       const nodes = treeRef.current?.querySelectorAll("[data-path]");
       const target = nodes ? Array.from(nodes).find((node) => node.dataset.path === selectedPath) : null;
-      target?.scrollIntoView({ block: "center" });
+      target?.scrollIntoView?.({ block: "center" });
     }, 0);
     return () => window.clearTimeout(timer);
   }, [selectedPath]);
 
   if (value === null || value === undefined) return <div className="p-8 text-center text-sm text-slate-500">Paste or load JSON to start.</div>;
   return (
-    <div ref={treeRef} className="h-full overflow-auto bg-[#0c0f13] p-2 font-mono">
+    <div ref={treeRef} role="tree" aria-label="JSON tree" className="h-full overflow-auto bg-[#0c0f13] p-2 font-mono">
       <TreeNode
         nodeKey="root"
         value={value}
@@ -123,6 +158,8 @@ export const TreeView = ({ value, selectedPath, selectedPaths, matches, onSelect
         selectedPaths={selectedPaths}
         matches={matches}
         onSelect={onSelect}
+        activePath={activePath}
+        onFocusPath={setActivePath}
         onContextMenu={onContextMenu}
       />
     </div>
