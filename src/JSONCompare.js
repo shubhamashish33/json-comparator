@@ -1,3 +1,4 @@
+import { ComparisonPresets } from "./components/ComparisonPresets";
 import { ActionMenu, KeyboardMenu } from "./components/KeyboardMenu";
 import { shouldRememberWorkspace, setRememberWorkspace, clearSavedWorkspace } from "./workspacePrivacy";
 import { usePaletteShortcut } from "./hooks/usePaletteShortcut";
@@ -1060,6 +1061,7 @@ const JSONCompare = () => {
             <button type="button" onClick={() => { clearSavedWorkspace(); setRememberWorkspace(false); setRemember(false); setStorageNotice("Saved workspace cleared. Open documents are kept in memory only."); }} className="rounded border border-slate-700 px-3 py-2 text-slate-200 focus:ring-2 focus:ring-cyan-500">Clear saved workspace & stop saving</button>
           </div>
         </details>
+        <div className={workspaceTab === "compare" ? "mb-3" : "hidden"}><ComparisonPresets settings={settings} onChange={setSettings} remember={rememberWorkspace} /></div>
         {workspaceTab !== "compare" && (
         <div className="mb-2 flex min-w-0 items-center gap-1 overflow-x-auto border-b border-slate-800">
           {documents.map((document) => (
