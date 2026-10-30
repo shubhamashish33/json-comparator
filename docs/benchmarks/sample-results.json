@@ -1,0 +1,61 @@
+{
+  "generatedAt": "2026-10-30T20:08:55.611Z",
+  "runtime": "v24.22.1",
+  "platform": "win32 10.0.26200 x64",
+  "cpu": "AMD Ryzen 5 3550H with Radeon Vega Mobile Gfx  ",
+  "logicalCpus": 8,
+  "totalMemoryGiB": 14,
+  "methodology": "Actual jsonWorker.js executed in Node worker_threads; median of 3 samples after warmup; round trips include structured clone. Excludes browser UI, Monaco, storage, and network. These results do not establish a browser file-size guarantee.",
+  "results": [
+    {
+      "case": "1 MiB target, reordered records",
+      "bytesPerDocument": 1022730,
+      "parseAndIndexMs": 49.6,
+      "comparisonMs": 52.4,
+      "searchMs": 17.2,
+      "differences": 5,
+      "indexedRows": 5000,
+      "indexTruncated": true
+    },
+    {
+      "case": "5 MiB target, reordered records",
+      "bytesPerDocument": 5149493,
+      "parseAndIndexMs": 175.6,
+      "comparisonMs": 188.3,
+      "searchMs": 67,
+      "differences": 24,
+      "indexedRows": 5000,
+      "indexTruncated": true
+    },
+    {
+      "case": "10 MiB target, reordered records",
+      "bytesPerDocument": 10320964,
+      "parseAndIndexMs": 357.3,
+      "comparisonMs": 367.8,
+      "searchMs": 133.3,
+      "differences": 48,
+      "indexedRows": 5000,
+      "indexTruncated": true
+    },
+    {
+      "case": "128 nested objects",
+      "bytesPerDocument": 1300,
+      "parseAndIndexMs": 2,
+      "comparisonMs": 0.8,
+      "searchMs": 0.3,
+      "differences": 1,
+      "indexedRows": 130,
+      "indexTruncated": false
+    },
+    {
+      "case": "10,000 changed records",
+      "bytesPerDocument": 308891,
+      "parseAndIndexMs": 37.8,
+      "comparisonMs": 74.5,
+      "searchMs": 17.1,
+      "differences": 10000,
+      "indexedRows": 5000,
+      "indexTruncated": true
+    }
+  ]
+}
