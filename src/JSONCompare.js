@@ -1,3 +1,6 @@
+import { ComparisonPresets } from "./components/ComparisonPresets";
+import { ActionMenu, KeyboardMenu } from "./components/KeyboardMenu";
+import { shouldRememberWorkspace, setRememberWorkspace, clearSavedWorkspace } from "./workspacePrivacy";
 import { usePaletteShortcut } from "./hooks/usePaletteShortcut";
 import { CommandPalette } from "./components/CommandPalette";
 import { useClipboard } from "./hooks/useClipboard";
@@ -75,7 +78,7 @@ const JSONCompare = () => {
   const activeTasksRef = useRef(new Map());
   const directEditActiveRef = useRef(false);
   const directEditTimerRef = useRef(null);
-  const [workspaceTab, setWorkspaceTab] = useState(() => searchParams.get("tab") === "compare" ? "compare" : "editor");
+  const [workspaceTab, setWorkspaceTab] = useState(() => ["compare", "query", "redact"].includes(searchParams.get("tab")) ? searchParams.get("tab") : "editor");
   const [editorMode, setEditorMode] = useState("code");
   const [compareMode, setCompareMode] = useState("text");
   const [documents, setDocuments] = useState([{ id: "document-1", name: "Document 1.json", text: "" }]);
@@ -137,6 +140,7 @@ const JSONCompare = () => {
   const [cursorPosition, setCursorPosition] = useState({ lineNumber: 1, column: 1 });
   const [dropActive, setDropActive] = useState(false);
   const [storageReady, setStorageReady] = useState(false);
+  const [rememberWorkspace, setRemember] = useState(shouldRememberWorkspace);
 
   const ajv = useMemo(() => new Ajv({ allErrors: true, strict: false }), []);
 
@@ -274,6 +278,7 @@ const JSONCompare = () => {
 
   useEffect(() => {
     try {
+      if (!shouldRememberWorkspace()) return;
       const storedDocuments = JSON.parse(localStorage.getItem(STORAGE_KEYS.documents) || "null");
       const storedActiveId = localStorage.getItem(STORAGE_KEYS.activeDocument);
       if (Array.isArray(storedDocuments) && storedDocuments.length) {
@@ -358,11 +363,13 @@ const JSONCompare = () => {
 
   useEffect(() => {
     if (!storageReady) return;
+    if (!rememberWorkspace) return;
     const leftStored = safeSetStorage(STORAGE_KEYS.left, leftText);
     const rightStored = safeSetStorage(STORAGE_KEYS.right, rightText);
     safeSetStorageJSON(STORAGE_KEYS.settings, settings);
     const documentsSize = documents.reduce((total, document) => total + document.text.length, 0);
     if (documentsSize <= STORAGE_TEXT_LIMIT) safeSetStorageJSON(STORAGE_KEYS.documents, documents);
+    else { try { localStorage.removeItem(STORAGE_KEYS.documents); } catch { /* Storage unavailable. */ } }
     safeSetStorage(STORAGE_KEYS.activeDocument, activeDocumentId);
     safeSetStorage(STORAGE_KEYS.schema, schemaText);
     safeSetStorage(STORAGE_KEYS.schemaEnabled, String(schemaEnabled));
@@ -371,7 +378,7 @@ const JSONCompare = () => {
     } else {
       setStorageNotice("");
     }
-  }, [activeDocumentId, documents, leftText, rightText, schemaEnabled, schemaText, settings, storageReady]);
+  }, [activeDocumentId, documents, leftText, rightText, schemaEnabled, schemaText, settings, storageReady, rememberWorkspace]);
 
   useEffect(() => {
     if (!schemaEnabled || !schemaText.trim() || leftParsed.error || leftParsed.value === null) {
@@ -400,10 +407,11 @@ const JSONCompare = () => {
   useEffect(() => {
     const close = () => setContextMenu(null);
     window.addEventListener("click", close);
-    window.addEventListener("keydown", close);
+    const escape = event => { if (event.key === "Escape") close(); };
+    window.addEventListener("keydown", escape);
     return () => {
       window.removeEventListener("click", close);
-      window.removeEventListener("keydown", close);
+      window.removeEventListener("keydown", escape);
     };
   }, []);
 
@@ -1044,6 +1052,16 @@ const JSONCompare = () => {
           </div>
           <span className="hidden sm:inline-flex items-center gap-2 rounded-full border border-emerald-800/50 bg-emerald-950/20 px-3 py-1.5 text-xs text-emerald-300"><ShieldCheck className="h-3.5 w-3.5" />Browser-local processing</span>
         </div>
+        <details className="mb-4 rounded-lg border border-slate-800 bg-[#101419] text-xs text-slate-400">
+          <summary className="cursor-pointer px-3 py-2">Privacy & storage · {rememberWorkspace ? "Workspace saved in this browser" : "Documents kept in memory only"}</summary>
+          <div className="space-y-3 border-t border-slate-800 p-3">
+            <label className="flex items-center gap-2 text-slate-200"><input type="checkbox" checked={rememberWorkspace} onChange={event => { const remember = event.target.checked; setRememberWorkspace(remember); setRemember(remember); setStorageNotice(remember ? "" : "Saved workspace cleared. Download documents before closing this tab."); }} />Remember workspace after refresh</label>
+            <p>Turning this off removes this app's saved documents, schema, and settings from browser storage. Open documents remain available until you close or refresh this tab.</p>
+            <p>Document processing happens in your browser. Site analytics and editor assets may use network requests. Loading a URL contacts that URL. Secret detection may miss sensitive values; review the output before sharing.</p>
+            <button type="button" onClick={() => { clearSavedWorkspace(); setRememberWorkspace(false); setRemember(false); setStorageNotice("Saved workspace cleared. Open documents are kept in memory only."); }} className="rounded border border-slate-700 px-3 py-2 text-slate-200 focus:ring-2 focus:ring-cyan-500">Clear saved workspace & stop saving</button>
+          </div>
+        </details>
+        <div className={workspaceTab === "compare" ? "mb-3" : "hidden"}><ComparisonPresets settings={settings} onChange={setSettings} remember={rememberWorkspace} /></div>
         {workspaceTab !== "compare" && (
         <div className="mb-2 flex min-w-0 items-center gap-1 overflow-x-auto border-b border-slate-800">
           {documents.map((document) => (
@@ -1108,11 +1126,7 @@ const JSONCompare = () => {
               </ToolbarButton>
             )}
             <div className="relative ml-auto">
-              <details>
-                <summary className="flex min-h-9 cursor-pointer list-none items-center gap-2 rounded-md border border-slate-700 bg-[#101419] px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-900">
-                  <MoreHorizontal className="h-4 w-4" />More
-                </summary>
-                <div className="absolute right-0 top-11 z-50 grid w-52 gap-1 rounded-lg border border-slate-700 bg-[#101419] p-1.5 shadow-2xl shadow-black/50">
+              <ActionMenu label={<><MoreHorizontal className="h-4 w-4" />More</>}>
                   <button onClick={() => { commitText(stringify(sampleLeft, 2)); setRightDocumentId(""); setRightText(stringify(sampleRight, 2)); }} className="rounded px-3 py-2 text-left text-xs hover:bg-slate-800">Load sample</button>
                   <button onClick={() => downloadText(activeDocument?.name || "data.json", leftText || "null")} className="rounded px-3 py-2 text-left text-xs hover:bg-slate-800">Download JSON</button>
                   <button onClick={() => leftParsed.value !== null && commitValue(sortKeysDeep(leftParsed.value))} disabled={leftParsed.error} className="rounded px-3 py-2 text-left text-xs hover:bg-slate-800 disabled:opacity-40">Sort keys</button>
@@ -1120,8 +1134,7 @@ const JSONCompare = () => {
                   <button onClick={() => setSchemaPanelOpen((current) => !current)} className="rounded px-3 py-2 text-left text-xs hover:bg-slate-800">JSON Schema</button>
                   <div className="my-1 border-t border-slate-800" />
                   <button onClick={resetWorkspace} className="rounded px-3 py-2 text-left text-xs text-red-200 hover:bg-red-950/40">Reset workspace</button>
-                </div>
-              </details>
+              </ActionMenu>
             </div>
             {workerStatus.busy && <ToolbarButton onClick={cancelWorkerWork}><X className="h-4 w-4" />Cancel work</ToolbarButton>}
           </div>
@@ -1541,13 +1554,10 @@ const JSONCompare = () => {
                 <ToolbarButton onClick={runCompare} active disabled={compareStatus.busy}>
                   <GitCompare className="h-4 w-4" />{compareStatus.busy ? "Comparing…" : "Compare values"}
                 </ToolbarButton>
-                <details className="relative">
-                  <summary className="flex min-h-9 cursor-pointer list-none items-center gap-2 rounded-md border border-slate-700 px-3 py-2 text-xs text-slate-300"><Download className="h-4 w-4" />Export</summary>
-                  <div className="absolute right-0 top-11 z-40 grid w-48 gap-1 rounded-lg border border-slate-700 bg-[#101419] p-1.5 shadow-xl">
+                <ActionMenu label={<><Download className="h-4 w-4" />Export</>}>
                     <button onClick={() => downloadText("json-patch.json", stringify(patch, 2))} disabled={compareStatus.progress !== 100 || compareStatus.busy} className="rounded px-3 py-2 text-left text-xs hover:bg-slate-800 disabled:opacity-40">Download JSON Patch</button>
                     <button onClick={() => leftParsed.value !== null && downloadText("merged-output.json", stringify(applyDiffToLeft(leftParsed.value, comparison), 2))} disabled={compareStatus.progress !== 100 || compareStatus.busy || leftParsed.value === null || Boolean(leftParsed.error)} className="rounded px-3 py-2 text-left text-xs hover:bg-slate-800 disabled:opacity-40">Download merged JSON</button>
-                  </div>
-                </details>
+                </ActionMenu>
               </div>
             </div>
             <div className="grid items-end gap-2 rounded-lg border border-slate-800 bg-[#101419] p-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] xl:col-span-2">
@@ -1677,10 +1687,7 @@ const JSONCompare = () => {
       <CopyToast notification={copyNotification} onDismiss={dismissCopyNotification} />
 
       {contextMenu && (
-        <div className="fixed z-[60] w-56 border border-slate-700 bg-[#101419] p-1 text-xs shadow-2xl shadow-black/40" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => {
-          event.stopPropagation();
-          setContextMenu(null);
-        }}>
+        <KeyboardMenu onClose={() => setContextMenu(null)} className="fixed z-[60] w-56 border border-slate-700 bg-[#101419] p-1 text-xs shadow-2xl shadow-black/40" style={{ left: contextMenu.x, top: contextMenu.y }}>
           <button onClick={() => addNode(contextMenu.path)} className="block w-full px-3 py-2 text-left text-slate-200 hover:bg-slate-800">Add child</button>
           <button onClick={() => editNode(contextMenu.path)} className="block w-full px-3 py-2 text-left text-slate-200 hover:bg-slate-800">Edit node</button>
           <button onClick={() => { commitValue(duplicateAtPath(leftParsed.value, contextMenu.path)); setContextMenu(null); }} className="block w-full px-3 py-2 text-left text-slate-200 hover:bg-slate-800">Duplicate node</button>
@@ -1694,7 +1701,7 @@ const JSONCompare = () => {
           <button onClick={() => copyText(stringify(getValueAtPath(leftParsed.value, contextMenu.path), 2), "value")} className="block w-full px-3 py-2 text-left text-slate-200 hover:bg-slate-800">{copied === "value" ? "Copied value" : "Copy value"}</button>
           <button onClick={() => clearSelectedValues(selectedPaths.size ? selectedPaths : new Set([contextMenu.path]))} className="block w-full px-3 py-2 text-left text-yellow-100 hover:bg-yellow-950/40">Clear selected values</button>
           <button onClick={() => removePaths(selectedPaths.size ? selectedPaths : new Set([contextMenu.path]))} className="block w-full px-3 py-2 text-left text-red-200 hover:bg-red-950/50">Remove selected</button>
-        </div>
+        </KeyboardMenu>
       )}
 
       <button

@@ -1,4 +1,5 @@
 export const STORAGE_KEYS = {
+  presets: "json-comparator-comparison-presets",
   left: "json-comparator-json1",
   right: "json-comparator-json2",
   settings: "json-comparator-settings",

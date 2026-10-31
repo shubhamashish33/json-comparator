@@ -47,3 +47,19 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the code layout, tests, and contribut
 ## License
 
 [MIT](LICENSE)
+
+## Browser storage and privacy
+
+Open **Privacy & storage** in the workspace to turn off **Remember workspace after refresh**. This clears the app's saved documents, schema, and settings and keeps the current workspace in memory only. Download anything you need before refreshing or closing the tab. The storage preference itself is remembered when browser storage is available.
+
+Document processing is local. Site analytics and editor asset loading may make network requests; importing from a URL contacts that URL. Secret detection is a review aid and may miss sensitive values.
+
+Tree keyboard controls: Up/Down move between visible nodes, Right expands or enters a node, Left collapses or returns to its parent, and Home/End move to the first/last visible node. Enter/Space selects and toggles a container. Shift+F10 opens node actions. Action menus support arrows, Home/End, Escape, and return focus to their trigger. Paged children remain available through the Show next button.
+
+Comparison presets: use Strict, Match records by ID, or API responses in Compare. Expand Customize rules to edit array matching, path filters, case rules, and numeric tolerance, then save a named preset. Up to 20 presets are stored locally when workspace saving is enabled; memory-only mode keeps them only for the open workspace session.
+
+Public tool pages are available at `/json-compare`, `/compare-json-arrays-by-id`, `/json-redactor`, and `/json-formatter`. `npm run build` prerenders the homepage, help, and tool pages and writes unique metadata for all routes. Vercel serves these HTML files directly; the editing workspace remains client-rendered. The public formatter keeps its input in memory.
+
+## Performance
+
+Run `npm run benchmark` for reproducible worker benchmarks. See [measurements and guardrails](docs/PERFORMANCE.md) for the recorded run, bounded views/storage/history, and what the measurements do and do not cover.

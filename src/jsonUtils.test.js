@@ -474,3 +474,16 @@ test("validates a useful subset of JSON Schema", () => {
     { path: "tags[1]", message: "Expected string, received number" },
   ]);
 });
+
+describe("data fidelity safeguards", () => {
+  test.each(['{"id":9007199254740993}', '{"id":1e400}', '{"id":9.007199254740993e15}', '{"id":1,"id":2}', '{"id":1,"\\u0069d":2}'])("blocks lossy processing of %s", source => {
+    const result = parseJSONDetailed(source);
+    expect(result.value).toBeNull();
+    expect(result.error.kind).toBe("data-fidelity");
+    expect(result.error.position).toBeGreaterThan(0);
+  });
+  test("accepts quoted IDs, repeated keys in different objects, and key-like strings", () => {
+    const source = '{"id":"9007199254740993","children":[{"id":1},{"id":2}],"text":"\\\"id\\\":1","safe":9007199254740991}';
+    expect(parseJSONDetailed(source)).toEqual({ value: JSON.parse(source), error: null });
+  });
+});
